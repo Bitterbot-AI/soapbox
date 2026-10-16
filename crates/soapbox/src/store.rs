@@ -113,7 +113,7 @@ impl Store {
     pub fn submit(&mut self, p: &Principal, spec: Submit, at: i64) -> Result<Job> {
         ensure!(p.has("submitter"), "submitter role required");
         ensure!(p.permits(&spec.mode), "pool/project membership required");
-        spec.workload.validate()?;
+        spec.validate()?;
         ensure!(
             !spec.idempotency_key.is_empty() && spec.idempotency_key.len() <= 128,
             "invalid idempotency key"
@@ -353,7 +353,7 @@ impl Store {
             return Ok(job);
         }
         check_lease(&job, p, &completion.lease_id, at)?;
-        let assurance = job.spec.workload.verify(&completion.result)?;
+        let assurance = job.spec.verify_result(&completion.result)?;
         ensure!(
             serde_json::to_vec(&completion.result)?.len() <= 2_097_152,
             "result too large"
@@ -385,7 +385,7 @@ impl Store {
             json!({"version":1,"job_id":job.id,"worker":p.id,"mode":job.spec.mode.name(),
             "currency":"TEST_CREDIT","charged_credits":price,"verification":assurance,"completed_at":at,
             "elapsed_seconds":at-job.run_started_at.unwrap_or(at),"result_sha256":digest(&serde_json::to_vec(&completion.result)?),
-            "signature":null,"authority":"coordinator","redeemable":false}),
+            "execution":completion.result.get("execution"),"execution_assurance":"worker_reported","signature":null,"authority":"coordinator","redeemable":false}),
         );
         job.result = Some(completion.result);
         save(&tx, &job)?;

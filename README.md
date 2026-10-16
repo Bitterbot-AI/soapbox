@@ -3,7 +3,7 @@
 Opt-in compute pools for **paid, private, and collective workloads**, implemented in Rust.
 Bitterbot is the first client; the protocol and worker can run independently.
 
-**Release 0.1 is a trusted pilot, not a public cloud marketplace.** Paid jobs use
+**Release 0.2 is a trusted pilot, not a public cloud marketplace.** Paid jobs use
 non-redeemable TEST_CREDIT balances. There is no cash, USDC, token issuance, or withdrawal.
 Storage is an account-scoped temporary artifact service on one coordinator.
 
@@ -12,7 +12,7 @@ Storage is an account-scoped temporary artifact service on one coordinator.
 - Authenticated coordinator with persistent SQLite jobs, accounts, reservations, receipts, and artifacts.
 - Independent workers connecting over HTTP on loopback or HTTPS remotely.
 - CPU SHA-256 batches with independently recomputed results.
-- Optional embeddings through an operator-configured, already-loaded local Ollama model.
+- GPU embedding batches through a pinned local Ollama model, automatic warmup, NVIDIA admission checks and runtime evidence.
 - Private pool ACLs, collective project ACLs and daily quotas, paid budget reservation and settlement.
 - Heartbeats, one active lease per worker, bounded renewal, cancellation, retry and refund.
 - Scoped API credentials, operator pause, local pause file, admission limits, and idempotency.
@@ -22,6 +22,11 @@ Storage is an account-scoped temporary artifact service on one coordinator.
 GPU residency is observed from Ollama, not attested. Embeddings are checked for shape,
 not semantic correctness. Workers are explicitly admitted and trusted in this release.
 CPU/RAM declarations are admission budgets, not OS-enforced isolation.
+
+See [Phase 2 GPU setup and architecture](docs/PHASE-2-GPU.md) and
+[physical GPU validation](docs/PHASE-2-VALIDATION.md).
+On this machine, run scripts/soapbox-gpu-pilot.ps1 from the sibling bitterbot-desktop
+repository for the complete interactive pilot, or add -TestOnly for automated verification.
 
 ## Quick start
 

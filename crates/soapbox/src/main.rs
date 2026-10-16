@@ -11,7 +11,7 @@ use std::{net::SocketAddr, path::PathBuf};
 #[derive(Parser)]
 #[command(
     version,
-    about = "Opt-in compute pools. v0.1 uses non-redeemable test credits."
+    about = "Opt-in compute pools. v0.2 uses non-redeemable test credits."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -19,6 +19,10 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    Inspect {
+        #[arg(long)]
+        config: PathBuf,
+    },
     Serve {
         #[arg(long)]
         config: PathBuf,
@@ -55,6 +59,13 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command {
+        Command::Inspect { config } => {
+            let config = WorkerConfig::read(&config)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&worker::inventory(&config).await?)?
+            );
+        }
         Command::Serve {
             config,
             db,

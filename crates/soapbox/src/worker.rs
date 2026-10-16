@@ -102,11 +102,50 @@ pub struct WorkerConfig {
     #[serde(default)]
     pub ollama_model: Option<String>,
     #[serde(default)]
+    pub ollama_digest: Option<String>,
+    #[serde(default = "default_temperature")]
+    pub max_gpu_temperature_c: u32,
+    #[serde(default = "default_utilization")]
+    pub max_gpu_utilization_pct: u32,
+    #[serde(default = "default_free")]
+    pub min_gpu_free_mib: u64,
+    #[serde(default)]
     pub pause_file: Option<PathBuf>,
     #[serde(default)]
     pub min_price_credits: u64,
 }
+fn default_temperature() -> u32 {
+    80
+}
+fn default_utilization() -> u32 {
+    40
+}
+fn default_free() -> u64 {
+    256
+}
 impl WorkerConfig {
+    pub fn check_gpu_policy(&self, hardware: &[crate::gpu::Gpu]) -> Result<()> {
+        ensure!(!hardware.is_empty(), "NVIDIA telemetry unavailable");
+        ensure!(
+            hardware
+                .iter()
+                .all(|g| g.temperature_c < self.max_gpu_temperature_c),
+            "GPU temperature exceeds admission limit"
+        );
+        ensure!(
+            hardware
+                .iter()
+                .all(|g| g.utilization_pct <= self.max_gpu_utilization_pct),
+            "GPU busy with existing work"
+        );
+        ensure!(
+            hardware
+                .iter()
+                .all(|g| g.memory_free_mib >= self.min_gpu_free_mib),
+            "insufficient free GPU memory"
+        );
+        Ok(())
+    }
     pub fn read(path: &std::path::Path) -> Result<Self> {
         let config: Self = serde_json::from_slice(&std::fs::read(path)?)?;
         ensure!(
@@ -121,100 +160,75 @@ impl WorkerConfig {
                     .all(|m| ["paid", "private", "collective"].contains(&m.as_str())),
             "explicit allowed modes required"
         );
+        ensure!(
+            (40..=90).contains(&config.max_gpu_temperature_c)
+                && config.max_gpu_utilization_pct <= 100
+                && config.min_gpu_free_mib >= 128,
+            "invalid GPU admission policy"
+        );
+        if config.ollama_model.is_some() {
+            ensure!(
+                config
+                    .ollama_digest
+                    .as_ref()
+                    .is_some_and(|d| crate::gpu::valid_digest(d)),
+                "ollama_model requires a pinned ollama_digest"
+            );
+        }
         Ok(config)
     }
 }
 pub async fn inventory(config: &WorkerConfig) -> Result<Offer> {
-    inventory_from(config, "http://127.0.0.1:11434").await
-}
-async fn inventory_from(config: &WorkerConfig, backend: &str) -> Result<Offer> {
     let mut system = sysinfo::System::new();
     system.refresh_memory();
     let available = system.available_memory() / 1024 / 1024;
-    let mut models = Vec::new();
-    let mut gpu = false;
-    if let Some(model) = &config.ollama_model {
-        let response = Client::builder()
-            .timeout(Duration::from_secs(2))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?
-            .get(format!("{backend}/api/ps"))
-            .send()
-            .await;
-        if let Ok(response) = response {
-            if response.status().is_success() {
-                if let Ok(value) = response.json::<Value>().await {
-                    if let Some(entries) = value.get("models").and_then(Value::as_array) {
-                        if let Some(entry) = entries.iter().find(|v| {
-                            v.get("name").and_then(Value::as_str) == Some(model.as_str())
-                                || v.get("model").and_then(Value::as_str) == Some(model.as_str())
-                        }) {
-                            models.push(model.clone());
-                            gpu = entry
-                                .get("size_vram")
-                                .and_then(Value::as_u64)
-                                .is_some_and(|n| n > 0);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(Offer {
+    let paused =
+        available < config.memory_mib || config.pause_file.as_ref().is_some_and(|p| p.exists());
+    let mut offer = Offer {
         cpu_threads: 1,
         memory_mib: config.memory_mib.min(available).max(64),
-        gpu_observed: gpu,
-        models,
+        gpu_observed: false,
+        models: vec![],
         modes: config.modes.clone(),
         pools: config.pools.clone(),
         projects: config.projects.clone(),
-        paused: available < config.memory_mib
-            || config.pause_file.as_ref().is_some_and(|p| p.exists()),
+        paused,
         min_price_credits: config.min_price_credits,
-    })
+        runtime: None,
+        hardware: vec![],
+        gpu_unavailable_reason: None,
+    };
+    if config.ollama_model.is_some() && !paused {
+        offer.hardware = crate::gpu::inventory().await.unwrap_or_default();
+        let readiness = async {
+            config.check_gpu_policy(&offer.hardware)?;
+            let runtime = crate::ollama::ready(crate::ollama::LOCAL_BACKEND, config).await?;
+            ensure!(runtime.fully_gpu(), "model is not fully GPU resident");
+            Ok::<_, anyhow::Error>(runtime)
+        };
+        match tokio::time::timeout(Duration::from_secs(100), readiness).await {
+            Ok(Ok(runtime)) => {
+                offer.gpu_observed = true;
+                offer.models.push(runtime.model.clone());
+                offer.runtime = Some(runtime);
+            }
+            Ok(Err(error)) => offer.gpu_unavailable_reason = Some(error.to_string()),
+            Err(_) => offer.gpu_unavailable_reason = Some("model warmup timed out".into()),
+        }
+    } else if paused {
+        offer.gpu_unavailable_reason = Some("worker paused or RAM allowance unavailable".into());
+    }
+    Ok(offer)
 }
 async fn execute(job: &Job, config: &WorkerConfig) -> Result<Value> {
-    execute_with_backend(job, config, "http://127.0.0.1:11434").await
-}
-async fn execute_with_backend(job: &Job, config: &WorkerConfig, backend: &str) -> Result<Value> {
     if let Some(result) = job.spec.workload.cpu_result() {
         return Ok(result);
     }
-    let Workload::Embeddings { model, texts } = &job.spec.workload else {
-        bail!("unsupported workload")
-    };
-    ensure!(
-        config.ollama_model.as_ref() == Some(model),
-        "model not allowed"
-    );
-    if job.spec.resources.require_gpu {
-        ensure!(
-            inventory_from(config, backend).await?.gpu_observed,
-            "configured model is not GPU resident"
-        );
-    }
-    let client = Client::builder()
-        .timeout(Duration::from_secs(100))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
-    let mut response = client
-        .post(format!("{backend}/api/embed"))
-        .json(&json!({"model":model,"input":texts,"truncate":false,"keep_alive":"5m"}))
-        .send()
-        .await?
-        .error_for_status()?;
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        ensure!(
-            bytes.len() + chunk.len() <= 2_097_152,
-            "embedding response too large"
-        );
-        bytes.extend_from_slice(&chunk);
-    }
-    let value: Value = serde_json::from_slice(&bytes)?;
-    let result = json!({"embeddings":value.get("embeddings").context("missing embeddings")?});
-    job.spec.workload.verify(&result)?;
-    Ok(result)
+    tokio::time::timeout(
+        Duration::from_secs(100),
+        crate::ollama::execute(job, config, crate::ollama::LOCAL_BACKEND),
+    )
+    .await?
 }
 pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<()> {
     loop {
@@ -234,8 +248,13 @@ pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<
                     result=&mut execution=>break result,
                     _=ticker.tick()=>{
                         // Failure to renew stops local execution. The coordinator owns retry decisions.
-                        client.post::<Value>(&format!("/v1/jobs/{}/renew",job.id),json!({"lease_id":lease})).await?;
-                        client.post::<Value>("/v1/workers/register",inventory(&config).await?).await?;
+                        if let Err(error) = client.post::<Value>(&format!("/v1/jobs/{}/renew",job.id),json!({"lease_id":lease})).await {
+                            // Drain the bounded inference request before another claim; never settle a revoked lease.
+                            let _ = execution.await;
+                            return Err(error);
+                        }
+                        // The registration remains fresh during a lease without probing/warming another inference.
+                        client.post::<Value>("/v1/workers/register", &offer).await?;
                     },
                     _=tokio::signal::ctrl_c()=>return Ok(()),
                 }
@@ -285,96 +304,6 @@ pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{
-        routing::{get, post},
-        Json, Router,
-    };
-    fn config() -> WorkerConfig {
-        WorkerConfig {
-            modes: vec!["private".into()],
-            pools: vec!["circle".into()],
-            projects: vec![],
-            memory_mib: 256,
-            ollama_model: Some("test-model:latest".into()),
-            pause_file: None,
-            min_price_credits: 0,
-        }
-    }
-    fn job() -> Job {
-        Job {
-            id: "test".into(),
-            owner: "buyer".into(),
-            spec: Submit {
-                idempotency_key: "test".into(),
-                mode: Mode::Private {
-                    pool_id: "circle".into(),
-                },
-                workload: Workload::Embeddings {
-                    model: "test-model:latest".into(),
-                    texts: vec!["one".into()],
-                },
-                resources: Resources {
-                    cpu_threads: 1,
-                    memory_mib: 256,
-                    require_gpu: true,
-                },
-            },
-            status: "running".into(),
-            attempts: 1,
-            created_at: 0,
-            deadline: 600,
-            worker: Some("w".into()),
-            lease_id: Some("lease".into()),
-            lease_until: Some(30),
-            run_started_at: Some(0),
-            result: None,
-            error: None,
-            receipt: None,
-            reserved_credits: 0,
-        }
-    }
-    #[tokio::test]
-    async fn configured_embedding_backend_is_executed_and_gpu_offer_is_observed() {
-        let app = Router::new()
-            .route(
-                "/api/ps",
-                get(|| async {
-                    Json(json!({"models":[{"name":"test-model:latest","size_vram":100}]}))
-                }),
-            )
-            .route(
-                "/api/embed",
-                post(|Json(body): Json<Value>| async move {
-                    assert_eq!(body["model"], "test-model:latest");
-                    assert_eq!(body["input"], json!(["one"]));
-                    assert_eq!(body["truncate"], false);
-                    Json(json!({"embeddings":[[0.25,0.75]]}))
-                }),
-            );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let offer = inventory_from(&config(), &base).await.unwrap();
-        assert!(offer.gpu_observed);
-        assert_eq!(offer.models, ["test-model:latest"]);
-        let result = execute_with_backend(&job(), &config(), &base)
-            .await
-            .unwrap();
-        assert_eq!(result["embeddings"], json!([[0.25, 0.75]]));
-        task.abort();
-    }
-    #[tokio::test]
-    async fn missing_model_never_satisfies_gpu_job() {
-        let app = Router::new().route("/api/ps", get(|| async { Json(json!({"models":[]})) }));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        assert!(!inventory_from(&config(), &base).await.unwrap().gpu_observed);
-        assert!(execute_with_backend(&job(), &config(), &base)
-            .await
-            .is_err());
-        task.abort();
-    }
     #[tokio::test]
     async fn api_paths_cannot_redirect_credentials() {
         let client = ApiClient::new("http://127.0.0.1:1", "x".repeat(32)).unwrap();

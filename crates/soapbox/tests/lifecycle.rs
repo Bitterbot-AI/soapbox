@@ -24,6 +24,9 @@ fn spec(key: &str, mode: Mode) -> Submit {
 }
 fn offer() -> Offer {
     Offer {
+        runtime: None,
+        hardware: vec![],
+        gpu_unavailable_reason: None,
         cpu_threads: 1,
         memory_mib: 512,
         gpu_observed: false,
@@ -309,6 +312,7 @@ fn idempotency_conflicts_and_unfunded_jobs_are_rejected() {
 #[test]
 fn embedding_validation_reports_limited_assurance() {
     let w = Workload::Embeddings {
+        model_digest: None,
         model: "test".into(),
         texts: vec!["hello".into()],
     };
@@ -333,4 +337,93 @@ fn reservations_and_jobs_survive_restart() {
     assert_eq!(s.balance("p").unwrap()["reserved_credits"], 2);
     s.cancel(&p, &id, 101).unwrap();
     assert_eq!(s.balance("p").unwrap()["available_credits"], 10);
+}
+
+#[test]
+fn pinned_gpu_results_require_matching_runtime_evidence_before_settlement() {
+    let mut s = store();
+    let buyer = principal("buyer");
+    let worker = principal("worker");
+    s.credit("buyer", 10, "fund", 100).unwrap();
+    let mut spec = paid("gpu");
+    spec.resources.require_gpu = true;
+    spec.workload = Workload::Embeddings {
+        model: "test:latest".into(),
+        model_digest: Some("a".repeat(64)),
+        texts: vec!["one".into()],
+    };
+    let submitted = s.submit(&buyer, spec.clone(), 100).unwrap();
+    let mut gpu_offer = offer();
+    gpu_offer.gpu_observed = true;
+    gpu_offer.models = vec!["test:latest".into()];
+    // A legacy boolean GPU claim is insufficient for pinned work.
+    s.register(&worker, gpu_offer.clone(), 100).unwrap();
+    assert!(s.claim(&worker, 100).unwrap().is_none());
+    gpu_offer.runtime = Some(soapbox::gpu::Runtime {
+        model: "test:latest".into(),
+        model_digest: "a".repeat(64),
+        version: "test".into(),
+        model_bytes: 100,
+        gpu_bytes: 100,
+        observed_at: 100,
+    });
+    s.register(&worker, gpu_offer, 100).unwrap();
+    let job = s.claim(&worker, 100).unwrap().unwrap();
+    let completion = Completion {
+        lease_id: job.lease_id.clone().unwrap(),
+        result: json!({"embeddings":[[0.1,0.2]]}),
+    };
+    assert!(s.complete(&worker, &job.id, completion, 101).is_err());
+    assert_eq!(s.balance("buyer").unwrap()["reserved_credits"], 1);
+    let execution = json!({"backend":"ollama","model":"test:latest","model_digest":"a".repeat(64),
+        "runtime_version":"test","fully_gpu_resident":true,"model_bytes":100,"gpu_bytes":100,"dimensions":2,
+        "batches":1,"wall_ms":10,"total_duration_ns":2000000,"load_duration_ns":1000,"prompt_tokens":1,
+        "hardware":[{"name":"RTX","uuid":"GPU-test","driver":"test","memory_total_mib":16000,
+            "memory_free_mib":14000,"utilization_pct":0,"temperature_c":50}]});
+    let mut result = json!({"embeddings":[[0.1,0.2]],"execution":execution});
+    result["execution"]["model_digest"] = json!("b".repeat(64));
+    assert!(s
+        .complete(
+            &worker,
+            &job.id,
+            Completion {
+                lease_id: job.lease_id.clone().unwrap(),
+                result: result.clone()
+            },
+            101
+        )
+        .is_err());
+    result["execution"]["model_digest"] = json!("a".repeat(64));
+    result["execution"]["fully_gpu_resident"] = json!(false);
+    assert!(s
+        .complete(
+            &worker,
+            &job.id,
+            Completion {
+                lease_id: job.lease_id.clone().unwrap(),
+                result: result.clone()
+            },
+            101
+        )
+        .is_err());
+    result["execution"]["fully_gpu_resident"] = json!(true);
+    let completion = Completion {
+        lease_id: job.lease_id.unwrap(),
+        result,
+    };
+    let completed = s
+        .complete(&worker, &job.id, completion.clone(), 101)
+        .unwrap();
+    s.complete(&worker, &job.id, completion, 102).unwrap();
+    assert_eq!(
+        completed.receipt.unwrap()["execution"]["model_digest"],
+        "a".repeat(64)
+    );
+    assert_eq!(s.balance("worker").unwrap()["available_credits"], 1);
+    assert_eq!(s.job(&submitted.id).unwrap().status, "succeeded");
+    if let Workload::Embeddings { model_digest, .. } = &mut spec.workload {
+        *model_digest = None;
+    }
+    spec.idempotency_key = "unpinned".into();
+    assert!(s.submit(&buyer, spec, 103).is_err());
 }

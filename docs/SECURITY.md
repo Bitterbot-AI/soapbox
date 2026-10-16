@@ -1,6 +1,6 @@
 # Security and operating limits
 
-## Trust model for v0.1
+## Trust model for v0.2
 
 Use explicit, trusted operators and nonsensitive pilot inputs. The coordinator sees input
 and result data. A worker sees its assigned plaintext. The SQLite database is not encrypted
@@ -30,7 +30,8 @@ storage, secure data erasure, or real payment settlement.
 
 A loaded Ollama model may consume resources outside the worker's declared allowance.
 Use dedicated/trusted hardware for this adapter until proper runtime isolation exists.
-The worker observes model GPU residency; a model can be evicted or partly CPU-resident.
+The worker requires full model GPU residency before and after GPU execution, with a pinned
+manifest digest. These are trusted-runtime observations, not independent hardware attestation.
 Do not bill hardware-hour guarantees from this signal.
 
 Artifacts expire logically, but SQLite pages/WAL/backups may retain bytes. Job inputs,

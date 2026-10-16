@@ -122,9 +122,9 @@ async fn status(
 ) -> ApiResult<Json<Value>> {
     app.with(|s| {
         s.sweep(now())?;
-        Ok(Json(json!({"api_version":API_VERSION,"release":"0.1.0","settlement":"test_credits",
+        Ok(Json(json!({"api_version":API_VERSION,"release":"0.2.0","settlement":"test_credits",
             "principal":{"id":p.id,"roles":p.roles,"pools":p.pools,"projects":p.projects},"account":s.balance(&p.id)?,"nodes":s.nodes(&p,now())?,"jobs":s.jobs(&p)?,
-            "capabilities":{"cpu_sha256":true,"embeddings":"operator_configured_ollama","durable_storage":false,
+            "capabilities":{"cpu_sha256":true,"embeddings":"pinned_ollama_batches","gpu_evidence":"worker_reported_full_residency","durable_storage":false,
                 "temporary_artifacts":true,"public_marketplace":false,"mesh_discovery":false}})))
     })
 }

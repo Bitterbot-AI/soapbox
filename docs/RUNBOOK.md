@@ -60,19 +60,14 @@ worker heartbeat registration. Current jobs drain; cancellation is a separate op
 This version does not infer user idleness, battery state or thermals. Running a worker is
 an explicit opt-in to contribute within the documented pilot workload limits.
 
-## Embeddings and observed GPU use
+## GPU embeddings
 
-Install/run Ollama separately and load an embedding model you are authorized to use.
-Set ollama_model in the worker configuration to its exact loaded name, including tag.
-Soapbox never downloads or automatically selects a model.
-
-The worker polls /api/ps and advertises that configured model only when loaded. If size_vram
-is positive it advertises observed GPU residency. Submit an embeddings job with the exact model.
-Setting resources.require_gpu makes residency a placement requirement.
-
-Model loading, GPU memory and actual execution placement remain Ollama's responsibility.
-This adapter does not independently attest hardware use or enforce GPU/RAM isolation.
-GPU execution must be tested on real hardware before making commercial promises.
+See [PHASE-2-GPU.md](PHASE-2-GPU.md) for the complete setup and execution contract.
+Set both ollama_model and ollama_digest in worker configuration. The operator installs
+the model; the worker can warm that pinned model automatically. Full GPU residency,
+NVIDIA telemetry and admission policy are required before advertising a ready GPU offer.
+GPU job requests include the same model_digest. Version 0.2 rejects boolean-only GPU
+claims and missing execution evidence. CPU-only v0.1 jobs remain compatible.
 
 ## Bitterbot connection
 

@@ -38,6 +38,13 @@ No claim of native Windows/GPU validation unless actually tested on those enviro
 
 ## Phase 2 — Qualified CPU/GPU service and a paid customer pilot
 
+**GPU execution increment implemented, 2026-10-16.** Native Windows RTX 4080 embedding
+jobs now execute through Bitterbot WebSocket RPC in paid/private/collective modes.
+Pinned models, automatic warmup, NVIDIA admission checks, ordered bounded batching,
+runtime measurements, desktop selection and live result refresh are implemented.
+See [PHASE-2-GPU.md](PHASE-2-GPU.md). The broader paid-customer exit gate below is
+not complete: billing remains TEST_CREDIT and hard isolation/settlement remain open.
+
 Dependencies: one buyer workload contract; designated supported GPUs/OSes; partner demand.
 Suggested scope: a small opt-in fleet with bounded batch jobs, not all existing mesh nodes.
 

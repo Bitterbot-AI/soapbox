@@ -38,8 +38,15 @@ impl Mode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Workload {
-    Sha256 { texts: Vec<String> },
-    Embeddings { model: String, texts: Vec<String> },
+    Sha256 {
+        texts: Vec<String>,
+    },
+    Embeddings {
+        model: String,
+        texts: Vec<String>,
+        #[serde(default)]
+        model_digest: Option<String>,
+    },
 }
 impl Workload {
     pub fn texts(&self) -> &[String] {
@@ -56,7 +63,18 @@ impl Workload {
             self.texts().iter().map(|s| s.len()).sum::<usize>() <= 262_144,
             "inputs exceed 256 KiB"
         );
-        if let Self::Embeddings { model, .. } = self {
+        if let Self::Embeddings {
+            model,
+            model_digest,
+            ..
+        } = self
+        {
+            ensure!(
+                model_digest
+                    .as_ref()
+                    .is_none_or(|d| crate::gpu::valid_digest(d)),
+                "invalid model digest"
+            );
             ensure!(!model.is_empty() && model.len() <= 128, "invalid model");
         }
         Ok(())
@@ -103,6 +121,18 @@ impl Workload {
             );
             dimensions = Some(values.len());
         }
+        if let Self::Embeddings {
+            model,
+            model_digest: Some(expected),
+            ..
+        } = self
+        {
+            crate::gpu::Execution::read(result)?.validate(
+                model,
+                expected,
+                dimensions.unwrap_or(0),
+            )?;
+        }
         Ok("shape_only_trusted_worker")
     }
 }
@@ -134,9 +164,43 @@ pub struct Submit {
     #[serde(default)]
     pub resources: Resources,
 }
+impl Submit {
+    pub fn validate(&self) -> Result<()> {
+        self.workload.validate()?;
+        if self.resources.require_gpu {
+            ensure!(
+                matches!(
+                    &self.workload,
+                    Workload::Embeddings {
+                        model_digest: Some(_),
+                        ..
+                    }
+                ),
+                "GPU jobs require a pinned embedding model digest"
+            );
+        }
+        Ok(())
+    }
+    pub fn verify_result(&self, result: &Value) -> Result<&'static str> {
+        let assurance = self.workload.verify(result)?;
+        if self.resources.require_gpu {
+            ensure!(
+                crate::gpu::Execution::read(result)?.fully_gpu_resident,
+                "GPU residency evidence required"
+            );
+        }
+        Ok(assurance)
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Offer {
+    #[serde(default)]
+    pub runtime: Option<crate::gpu::Runtime>,
+    #[serde(default)]
+    pub hardware: Vec<crate::gpu::Gpu>,
+    #[serde(default)]
+    pub gpu_unavailable_reason: Option<String>,
     pub cpu_threads: u32,
     pub memory_mib: u64,
     pub gpu_observed: bool,
@@ -159,7 +223,21 @@ impl Offer {
         {
             return false;
         }
-        if let Workload::Embeddings { model, .. } = &spec.workload {
+        if let Workload::Embeddings {
+            model,
+            model_digest,
+            ..
+        } = &spec.workload
+        {
+            if let Some(expected) = model_digest {
+                if !self.runtime.as_ref().is_some_and(|r| {
+                    r.model == *model
+                        && r.model_digest == *expected
+                        && (!spec.resources.require_gpu || r.fully_gpu())
+                }) {
+                    return false;
+                }
+            }
             if !self.models.contains(model) {
                 return false;
             }

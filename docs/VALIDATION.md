@@ -1,5 +1,8 @@
 # Validation record
 
+**Current GPU evidence:** [Phase 2 native GPU validation](PHASE-2-VALIDATION.md).
+The record below describes Phase 1 only; its no-physical-GPU statement is historical.
+
 Date: 2026-10-16. Source state: initial Soapbox v0.1 implementation.
 
 ## Passed

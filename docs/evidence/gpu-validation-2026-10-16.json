@@ -1,0 +1,161 @@
+{
+  "testedAt": "2026-10-16T21:05:49.747Z",
+  "passed": true,
+  "physicalGpu": true,
+  "liveGatewayWebSocket": true,
+  "gatewayProfile": "minimal (unrelated services disabled)",
+  "modes": [
+    "private",
+    "collective",
+    "paid"
+  ],
+  "cancelled": "512d0658-d80e-4d7d-8deb-b6657a26579d",
+  "accounting": {
+    "account": "operator",
+    "available_credits": 67,
+    "currency": "TEST_CREDIT",
+    "redeemable": false,
+    "reserved_credits": 0
+  },
+  "managedLifecycle": true,
+  "receipts": [
+    {
+      "mode": "private",
+      "receipt": {
+        "authority": "coordinator",
+        "charged_credits": 0,
+        "completed_at": 1792184744,
+        "currency": "TEST_CREDIT",
+        "elapsed_seconds": 0,
+        "execution": {
+          "backend": "ollama",
+          "batches": 3,
+          "dimensions": 384,
+          "fully_gpu_resident": true,
+          "gpu_bytes": 27137146,
+          "hardware": [
+            {
+              "driver": "610.88",
+              "memory_free_mib": 14690,
+              "memory_total_mib": 16376,
+              "name": "NVIDIA GeForce RTX 4080",
+              "temperature_c": 48,
+              "utilization_pct": 2,
+              "uuid": "GPU-b02ef7d8-a20c-f939-e352-bffb28d93663"
+            }
+          ],
+          "load_duration_ns": 9558800,
+          "model": "all-minilm:latest",
+          "model_bytes": 27137146,
+          "model_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef",
+          "prompt_tokens": 429,
+          "runtime_version": "0.40.5",
+          "total_duration_ns": 248902200,
+          "wall_ms": 287
+        },
+        "execution_assurance": "worker_reported",
+        "job_id": "07cb667b-d845-4e5a-bec9-5c50821630ba",
+        "mode": "private",
+        "redeemable": false,
+        "result_sha256": "5494bf98db78085dc29f94c7d13b40ac2948d6d13888721227ee317520741462",
+        "signature": null,
+        "verification": "shape_only_trusted_worker",
+        "version": 1,
+        "worker": "worker"
+      },
+      "referenceMaxDifference": 0
+    },
+    {
+      "mode": "collective",
+      "receipt": {
+        "authority": "coordinator",
+        "charged_credits": 0,
+        "completed_at": 1792184746,
+        "currency": "TEST_CREDIT",
+        "elapsed_seconds": 0,
+        "execution": {
+          "backend": "ollama",
+          "batches": 3,
+          "dimensions": 384,
+          "fully_gpu_resident": true,
+          "gpu_bytes": 27137146,
+          "hardware": [
+            {
+              "driver": "610.88",
+              "memory_free_mib": 14687,
+              "memory_total_mib": 16376,
+              "name": "NVIDIA GeForce RTX 4080",
+              "temperature_c": 48,
+              "utilization_pct": 1,
+              "uuid": "GPU-b02ef7d8-a20c-f939-e352-bffb28d93663"
+            }
+          ],
+          "load_duration_ns": 8011900,
+          "model": "all-minilm:latest",
+          "model_bytes": 27137146,
+          "model_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef",
+          "prompt_tokens": 429,
+          "runtime_version": "0.40.5",
+          "total_duration_ns": 94850400,
+          "wall_ms": 129
+        },
+        "execution_assurance": "worker_reported",
+        "job_id": "a63fc74d-1f24-4d30-aec2-6a28af152857",
+        "mode": "collective",
+        "redeemable": false,
+        "result_sha256": "a57ad3fdfbc39b330caba782881717552fe0ece51cbf43d6042d172ff27bc602",
+        "signature": null,
+        "verification": "shape_only_trusted_worker",
+        "version": 1,
+        "worker": "worker"
+      },
+      "referenceMaxDifference": 0
+    },
+    {
+      "mode": "paid",
+      "receipt": {
+        "authority": "coordinator",
+        "charged_credits": 33,
+        "completed_at": 1792184749,
+        "currency": "TEST_CREDIT",
+        "elapsed_seconds": 0,
+        "execution": {
+          "backend": "ollama",
+          "batches": 3,
+          "dimensions": 384,
+          "fully_gpu_resident": true,
+          "gpu_bytes": 27137146,
+          "hardware": [
+            {
+              "driver": "610.88",
+              "memory_free_mib": 14687,
+              "memory_total_mib": 16376,
+              "name": "NVIDIA GeForce RTX 4080",
+              "temperature_c": 48,
+              "utilization_pct": 2,
+              "uuid": "GPU-b02ef7d8-a20c-f939-e352-bffb28d93663"
+            }
+          ],
+          "load_duration_ns": 8890600,
+          "model": "all-minilm:latest",
+          "model_bytes": 27137146,
+          "model_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef",
+          "prompt_tokens": 429,
+          "runtime_version": "0.40.5",
+          "total_duration_ns": 110334000,
+          "wall_ms": 149
+        },
+        "execution_assurance": "worker_reported",
+        "job_id": "bf8b0908-2eff-4385-af9e-e69687366f63",
+        "mode": "paid",
+        "redeemable": false,
+        "result_sha256": "13203f6752b59d9e138d94a926dd633563d9113c877abe400595e5ddc0a903a1",
+        "signature": null,
+        "verification": "shape_only_trusted_worker",
+        "version": 1,
+        "worker": "worker"
+      },
+      "referenceMaxDifference": 0
+    }
+  ]
+}

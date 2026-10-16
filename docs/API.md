@@ -39,9 +39,12 @@ Other modes: { "kind": "paid", "max_cost_credits": 2 } and
 Current fixed quote is one test credit per input string. Reserve the quote, not the full cap.
 
 Embedding workload:
-{ "kind": "embeddings", "model": "nomic-embed-text:latest", "texts": ["one"] }.
-This exact model must be preloaded and allowed on the worker.
-Require GPU only when model residency is observed; this is not a performance guarantee.
+{ "kind": "embeddings", "model": "all-minilm:latest", "model_digest":
+"1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef", "texts": ["one"] }.
+The exact model must be installed and digest-pinned on the worker; v0.2 warms it automatically.
+GPU requests must include workload.model_digest (64 lowercase SHA-256 hex characters).
+GPU jobs require full model residency before and after execution plus worker-reported evidence.
+See PHASE-2-GPU.md for the execution object included in results and receipts.
 
 The same idempotency key with different content is a conflict. A new intentional job
 requires a new key. Retry an uncertain submission with the same key.
@@ -51,7 +54,8 @@ requires a new key. Retry an uncertain submission with the same key.
 Claim returns null or a Job with id, spec, lease_id, lease_until and attempts.
 Renew/fail: { "lease_id": "..." }.
 Complete: { "lease_id": "...", "result": { "hashes": ["..."] } }.
-An embedding result is { "embeddings": [[0.1, 0.2]] }.
+An unpinned legacy embedding result may contain only embeddings. A pinned result must also
+include the typed execution evidence described in PHASE-2-GPU.md.
 
 Results are capped at 2 MiB. Accepted completion returns a receipt indicating the actual
 assurance: recomputed or shape_only_trusted_worker. Paid settlement is a fixed accepted-job

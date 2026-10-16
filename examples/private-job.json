@@ -1,0 +1,14 @@
+{
+  "idempotency_key": "private-example-1",
+  "mode": {
+    "kind": "private",
+    "pool_id": "circle-demo"
+  },
+  "workload": {
+    "kind": "sha256",
+    "texts": [
+      "Soapbox",
+      "Bitterbot"
+    ]
+  }
+}

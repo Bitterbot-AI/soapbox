@@ -1,0 +1,6 @@
+/target/
+/data/
+/.local/
+/config.local.json
+*.sqlite*
+.env

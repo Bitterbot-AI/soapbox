@@ -1,0 +1,14 @@
+{
+  "idempotency_key": "paid-example-1",
+  "mode": {
+    "kind": "paid",
+    "max_cost_credits": 2
+  },
+  "workload": {
+    "kind": "sha256",
+    "texts": [
+      "Soapbox",
+      "Bitterbot"
+    ]
+  }
+}

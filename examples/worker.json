@@ -1,0 +1,17 @@
+{
+  "modes": [
+    "paid",
+    "private",
+    "collective"
+  ],
+  "pools": [
+    "circle-demo"
+  ],
+  "projects": [
+    "research-demo"
+  ],
+  "memory_mib": 256,
+  "ollama_model": null,
+  "pause_file": "data/PAUSE",
+  "min_price_credits": 1
+}

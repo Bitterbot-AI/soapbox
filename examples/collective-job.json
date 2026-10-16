@@ -1,0 +1,14 @@
+{
+  "idempotency_key": "collective-example-1",
+  "mode": {
+    "kind": "collective",
+    "project_id": "research-demo"
+  },
+  "workload": {
+    "kind": "sha256",
+    "texts": [
+      "Soapbox",
+      "Bitterbot"
+    ]
+  }
+}

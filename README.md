@@ -1,0 +1,92 @@
+# Soapbox
+
+Opt-in compute pools for **paid, private, and collective workloads**, implemented in Rust.
+Bitterbot is the first client; the protocol and worker can run independently.
+
+**Release 0.1 is a trusted pilot, not a public cloud marketplace.** Paid jobs use
+non-redeemable TEST_CREDIT balances. There is no cash, USDC, token issuance, or withdrawal.
+Storage is an account-scoped temporary artifact service on one coordinator.
+
+## What runs today
+
+- Authenticated coordinator with persistent SQLite jobs, accounts, reservations, receipts, and artifacts.
+- Independent workers connecting over HTTP on loopback or HTTPS remotely.
+- CPU SHA-256 batches with independently recomputed results.
+- Optional embeddings through an operator-configured, already-loaded local Ollama model.
+- Private pool ACLs, collective project ACLs and daily quotas, paid budget reservation and settlement.
+- Heartbeats, one active lease per worker, bounded renewal, cancellation, retry and refund.
+- Scoped API credentials, operator pause, local pause file, admission limits, and idempotency.
+- Bitterbot gateway adapter and desktop Compute view (in the sibling bitterbot-desktop repository).
+- End-to-end tests with actual worker processes.
+
+GPU residency is observed from Ollama, not attested. Embeddings are checked for shape,
+not semantic correctness. Workers are explicitly admitted and trusted in this release.
+CPU/RAM declarations are admission budgets, not OS-enforced isolation.
+
+## Quick start
+
+Prerequisites: stable Rust and a C toolchain. Node 22+ is needed only for the demo.
+On this development machine, use WSL Ubuntu; the existing Rust toolchain lives there.
+
+```sh
+cargo build --locked
+node scripts/demo.mjs
+```
+
+The demo starts a coordinator and two workers, submits all three job modes, checks results,
+verifies accounting and artifact retrieval, prints a report, and stops its processes.
+Every run generates fresh local credentials. It does not contact a payment provider.
+
+To leave the demo available for the Bitterbot UI:
+
+```sh
+node scripts/demo.mjs --keep
+```
+
+This writes a private, ignored `.local/demo.env` with the three Bitterbot connection settings.
+Load those settings into the gateway environment and restart the gateway.
+See [the runbook](docs/RUNBOOK.md). Do not commit this file.
+
+If you built into another target directory, set `SOAPBOX_BINARY` to the executable.
+For example, on this machine:
+
+```sh
+SOAPBOX_BINARY=/tmp/soapbox-target/debug/soapbox node scripts/demo.mjs
+```
+
+## Verify
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+```
+
+CI runs these checks on Linux, macOS, and Windows. Local verification is recorded in
+[VALIDATION.md](docs/VALIDATION.md); CI configuration is not evidence that those hosts passed.
+
+## Documents
+
+- [Architecture and trust boundaries](docs/ARCHITECTURE.md)
+- [Phased MVP plan and acceptance gates](docs/MVP-PLAN.md)
+- [API and wire examples](docs/API.md)
+- [Operations and Bitterbot integration](docs/RUNBOOK.md)
+- [Legacy Java mapping](docs/LEGACY-MAPPING.md)
+- [Threat model and current limitations](docs/SECURITY.md)
+- [Partner pilot briefs](docs/PARTNERS.md)
+
+The repository does not depend on the old Java blockchain or transcoding stack.
+Original Java material in D:\Soapbox remains untouched.
+
+## Windows demo on this machine
+
+A native development executable has been built and tested at .local/bin/soapbox.exe.
+Run the complete demo from PowerShell:
+
+```powershell
+& D:\Bitterbot\soapbox\scripts\demo.ps1
+```
+
+Add -Keep to leave the demo running for the Bitterbot UI. The script restores your prior
+SOAPBOX_BINARY setting on exit. This executable is an unsigned debug build; the source
+and build instructions are the portable deliverable.

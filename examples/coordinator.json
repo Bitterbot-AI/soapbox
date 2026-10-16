@@ -1,0 +1,59 @@
+{
+  "principals": [
+    {
+      "id": "operator",
+      "token_env": "SOAPBOX_ADMIN_TOKEN",
+      "roles": [
+        "admin",
+        "submitter"
+      ],
+      "pools": [
+        "circle-demo"
+      ],
+      "projects": [
+        "research-demo"
+      ]
+    },
+    {
+      "id": "buyer",
+      "token_env": "SOAPBOX_CLIENT_TOKEN",
+      "roles": [
+        "submitter"
+      ],
+      "pools": [
+        "circle-demo"
+      ],
+      "projects": [
+        "research-demo"
+      ]
+    },
+    {
+      "id": "worker-1",
+      "token_env": "SOAPBOX_WORKER_TOKEN",
+      "roles": [
+        "worker"
+      ],
+      "pools": [
+        "circle-demo"
+      ],
+      "projects": [
+        "research-demo"
+      ]
+    },
+    {
+      "id": "worker-2",
+      "token_env": "SOAPBOX_WORKER2_TOKEN",
+      "roles": [
+        "worker"
+      ],
+      "pools": [
+        "circle-demo"
+      ],
+      "projects": [
+        "research-demo"
+      ]
+    }
+  ],
+  "collective_daily_items": 1000,
+  "artifact_quota_bytes": 16777216
+}

@@ -1,4 +1,4 @@
-# Soapbox 0.3.0-rc.3 — desktop wizard preview
+# Soapbox 0.3.0-rc.4 — desktop wizard preview
 
 This private release installs **Compute → Set up buyer or operator** into an existing
 Bitterbot Desktop **1.8.0** installation. Payments are restricted to **Base Sepolia
@@ -7,7 +7,7 @@ Bitterbot Desktop **1.8.0** installation. Payments are restricted to **Base Sepo
 ## Install without terminal commands
 
 1. Sign in to GitHub with an account granted access to `Bitterbot-AI/soapbox` and open
-   the `v0.3.0-rc.3` release. Download the Windows/WSL ZIP or Linux tar.gz asset.
+   the `v0.3.0-rc.4` release. Download the Windows/WSL ZIP or Linux tar.gz asset.
 2. Extract the **entire** archive. On Windows, open **Soapbox-Setup.exe**. On Ubuntu,
    open the executable **Soapbox-Setup**. A local setup page opens in your default browser.
 3. Choose **Buyer** or **GPU operator**, then **Check prerequisites**. Correct any failed
@@ -27,6 +27,14 @@ Bitterbot or WSL installer. The installed Bitterbot supplies Node.js 22+. Buyers
 Container Toolkit and cgroup v2 memory/swap enforcement. A working NVIDIA driver is required.
 The setup page binds only to loopback and uses a random, temporary session credential.
 Click **Close installer** when finished; unused sessions expire after 30 minutes.
+
+## Upgrade from rc3
+
+Run the rc4 installer against the same Bitterbot profile, then restart Bitterbot.
+Existing enrollment, operator settings and both wallets are retained. rc4 corrects
+the approved escrow bytecode hash that prevented buyer funding in the published rc3
+plugin. It also includes a regression test for the release payment policy.
+Compute stays enabled by default and payments stay on Base Sepolia.
 
 ## Buyer
 
@@ -75,7 +83,8 @@ No firewalls, DNS, VPNs or public ports are changed by this installer.
 
 ## Release boundaries
 
-The installer/UI/plugin and bundled fixed-workload Rust runtime are rc3.
+The installer package and plugin are rc4. The UI, launchers and bundled fixed-workload
+Rust runtime are unchanged from rc3; the runtime archive retains its rc3 filename and pin.
 This candidate includes API disclosure fixes and tighter desktop funding/account boundaries. SHA256SUMS and the per-file release manifest detect corruption; these
 are not a publisher signing certificate. No credentials, enrolled identities, wallet files,
 databases, logs or cached models are distributed. Only approved CPU hashing and GPU embedding

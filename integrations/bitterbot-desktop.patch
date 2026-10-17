@@ -2089,7 +2089,7 @@ index 00000000..ff5f2878
 +}
 diff --git a/docs/network/soapbox.md b/docs/network/soapbox.md
 new file mode 100644
-index 00000000..dd3913b9
+index 00000000..23ea3849
 --- /dev/null
 +++ b/docs/network/soapbox.md
 @@ -0,0 +1,121 @@
@@ -2110,7 +2110,7 @@ index 00000000..dd3913b9
 +## Install the private test release
 +
 +Download the Windows/WSL ZIP or Linux archive from the private
-+[Soapbox release](https://github.com/Bitterbot-AI/soapbox/releases/tag/v0.3.0-rc.3).
++[Soapbox release](https://github.com/Bitterbot-AI/soapbox/releases/tag/v0.3.0-rc.4).
 +Extract the entire archive, then open **Soapbox-Setup.exe** on Windows or
 +**Soapbox-Setup** on Ubuntu. Choose Buyer or GPU operator and run the prerequisite
 +checks. Acknowledge the installation, install the wizard and follow the Open
@@ -2216,14 +2216,14 @@ index 00000000..dd3913b9
 +for the selected corrections and remaining work.
 diff --git a/extensions/soapbox-compute/bitterbot.plugin.json b/extensions/soapbox-compute/bitterbot.plugin.json
 new file mode 100644
-index 00000000..9bfa47e2
+index 00000000..c2eedbbc
 --- /dev/null
 +++ b/extensions/soapbox-compute/bitterbot.plugin.json
 @@ -0,0 +1,17 @@
 +{
 +  "id": "soapbox-compute",
 +  "name": "Soapbox Compute",
-+  "version": "0.3.0-rc.3",
++  "version": "0.3.0-rc.4",
 +  "description": "Isolated compute with a separate Base Sepolia wallet",
 +  "configSchema": {
 +    "type": "object",
@@ -2361,13 +2361,13 @@ index 00000000..51bfb930
 +};
 diff --git a/extensions/soapbox-compute/package.json b/extensions/soapbox-compute/package.json
 new file mode 100644
-index 00000000..90418f2b
+index 00000000..5db918da
 --- /dev/null
 +++ b/extensions/soapbox-compute/package.json
 @@ -0,0 +1,10 @@
 +{
 +  "name": "@bitterbot/soapbox-compute",
-+  "version": "0.3.0-rc.3",
++  "version": "0.3.0-rc.4",
 +  "type": "module",
 +  "bitterbot": {
 +    "extensions": [
@@ -5531,7 +5531,7 @@ index 00000000..c74b0cf1
 +}
 diff --git a/src/infra/soapbox-payment-policy.ts b/src/infra/soapbox-payment-policy.ts
 new file mode 100644
-index 00000000..c4c1593e
+index 00000000..c671d8e4
 --- /dev/null
 +++ b/src/infra/soapbox-payment-policy.ts
 @@ -0,0 +1,6 @@
@@ -5539,7 +5539,7 @@ index 00000000..c4c1593e
 +export const SOAPBOX_PAYMENT_POLICY = {
 +  chainId: 84532,
 +  escrow: "0x85dbc619cd8f05e06a5fc231d04483b6aa7bff17",
-+  codeSha256: "b19b0bdd3ec912324feefbc91b61efe049c160ed5bed20c029b1cbeeda5553a99",
++  codeSha256: "b19b0bdd3ec912324feefbc91b61efe049c160ed5bed20c029b1cbeda5553a99",
 +} as const;
 diff --git a/src/infra/soapbox-service.ts b/src/infra/soapbox-service.ts
 new file mode 100644
@@ -5805,11 +5805,12 @@ index 00000000..36eeb1ec
 +});
 diff --git a/src/services/soapbox-payment.test.ts b/src/services/soapbox-payment.test.ts
 new file mode 100644
-index 00000000..0424ccc7
+index 00000000..457f940f
 --- /dev/null
 +++ b/src/services/soapbox-payment.test.ts
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,66 @@
 +import { describe, expect, it } from "vitest";
++import { SOAPBOX_PAYMENT_POLICY } from "../infra/soapbox-payment-policy.js";
 +import {
 +  assertApprovedSoapboxQuote,
 +  validateSoapboxQuote,
@@ -5828,6 +5829,14 @@ index 00000000..0424ccc7
 +  expires: Math.floor(Date.now() / 1000) + 3600,
 +});
 +describe("Soapbox wallet funding boundary", () => {
++  it("ships a valid Base Sepolia deployment pin without mocking release policy", () => {
++    expect(SOAPBOX_PAYMENT_POLICY.chainId).toBe(84532);
++    expect(SOAPBOX_PAYMENT_POLICY.escrow).toMatch(/^0x[\da-f]{40}$/);
++    expect(SOAPBOX_PAYMENT_POLICY.codeSha256).toMatch(/^[\da-f]{64}$/);
++    expect(Buffer.from(SOAPBOX_PAYMENT_POLICY.codeSha256, "hex").toString("hex")).toBe(
++      SOAPBOX_PAYMENT_POLICY.codeSha256,
++    );
++  });
 +  it("requires approval of every payment field and rejects changed quotes", () => {
 +    const payment = quote();
 +    expect(() => assertApprovedSoapboxQuote(undefined, payment)).toThrow("approve");
@@ -6076,7 +6085,7 @@ index 00000000..fc01eaf6
 +);
 diff --git a/src/services/soapbox-setup-runtime.ts b/src/services/soapbox-setup-runtime.ts
 new file mode 100644
-index 00000000..96163f3b
+index 00000000..20362a8e
 --- /dev/null
 +++ b/src/services/soapbox-setup-runtime.ts
 @@ -0,0 +1,281 @@
@@ -6099,7 +6108,7 @@ index 00000000..96163f3b
 +import { soapboxOperatorEnvironment } from "../infra/soapbox-connection.js";
 +
 +export const SOAPBOX_SETUP_RELEASE = {
-+  url: "https://github.com/Bitterbot-AI/soapbox/releases/tag/v0.3.0-rc.3",
++  url: "https://github.com/Bitterbot-AI/soapbox/releases/tag/v0.3.0-rc.4",
 +  filename: "soapbox-runtime-0.3.0-rc.3-linux-x64.tar.gz",
 +  bytes: 4297661,
 +  sha256: "2bcabeeb13ca212ecaf9af0e2860b30d53f3a4b13f1956fb962bf0ebf2936190",

@@ -16,6 +16,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - run: rustc --edition 2021 -D warnings distribution/launcher.rs -o launcher-check
   settlement:
     runs-on: ubuntu-latest
     defaults:
@@ -37,4 +38,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --test distribution/distribution.test.mjs
+      - run: node --test distribution/*.test.mjs

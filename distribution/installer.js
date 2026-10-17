@@ -1,0 +1,13 @@
+const $=id=>document.getElementById(id),token=location.hash.slice(1);history.replaceState(null,'',location.pathname);
+let checkedRole=null,busy=false;
+const role=()=>document.querySelector('input[name="role"]:checked').value;
+const update=()=>{$('install').disabled=busy||checkedRole!==role()||!$('consent').checked;$('rollback').disabled=busy||!$('rollback-consent').checked;$('check').disabled=busy;document.querySelectorAll('input[name="role"]').forEach(e=>e.disabled=busy);$('close').disabled=busy;};
+async function api(route,data){const response=await fetch('/api/'+route,{method:data?'POST':'GET',headers:{Authorization:'Bearer '+token,...(data?{'Content-Type':'application/json'}:{})},body:data?JSON.stringify(data):undefined});const result=await response.json();if(!response.ok)throw Error(result.error||'Request failed');return result;}
+async function status(){const s=await api('status');$('rollback-panel').hidden=!s.rollback_available;if(s.desktop_url)$('desktop').href=s.desktop_url;}
+async function run(action){busy=true;update();$('error').textContent='';try{await action();}catch(e){$('error').textContent=e.message;$('status').textContent='';}finally{busy=false;update();}}
+document.querySelectorAll('input').forEach(e=>e.addEventListener('change',update));
+$('check').onclick=()=>run(async()=>{checkedRole=null;$('status').textContent='Checking this installation…';const result=await api('check',{role:role()});const list=document.createElement('ul');for(const c of result.checks){const li=document.createElement('li');li.className=c.ok?'pass':'fail';li.textContent=(c.ok?'✓ ':'✗ ')+c.name+' — '+c.detail;list.append(li);}$('checks').replaceChildren(list);if(result.ok)checkedRole=role();$('status').textContent=result.ok?'Prerequisites passed. Ready to install.':'Resolve the failed checks, then check again.';});
+$('install').onclick=()=>run(async()=>{$('status').textContent='Verifying and installing Compute…';await api('install',{role:role()});$('status').textContent='Compute wizard installed. Your main wallet is unchanged.';$('next').hidden=false;checkedRole=null;$('consent').checked=false;await status();});
+$('rollback').onclick=()=>run(async()=>{$('status').textContent='Checking and restoring the previous setup…';await api('rollback',{});$('status').textContent='Previous Compute setup restored. Restart Bitterbot if needed. Wallet data was kept.';$('next').hidden=true;$('rollback-consent').checked=false;await status();});
+$('close').onclick=()=>run(async()=>{await api('close',{});$('status').textContent='Installer closed. You can close this tab.';document.querySelectorAll('button').forEach(b=>b.hidden=true);});
+run(status);

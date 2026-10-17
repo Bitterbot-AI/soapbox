@@ -1,4 +1,4 @@
-# Soapbox 0.3.0-rc.2 — desktop wizard preview
+# Soapbox 0.3.0-rc.3 — desktop wizard preview
 
 This private release installs **Compute → Set up buyer or operator** into an existing
 Bitterbot Desktop **1.8.0** installation. Payments are restricted to **Base Sepolia
@@ -7,7 +7,7 @@ Bitterbot Desktop **1.8.0** installation. Payments are restricted to **Base Sepo
 ## Install without terminal commands
 
 1. Sign in to GitHub with an account granted access to `Bitterbot-AI/soapbox` and open
-   the `v0.3.0-rc.2` release. Download the Windows/WSL ZIP or Linux tar.gz asset.
+   the `v0.3.0-rc.3` release. Download the Windows/WSL ZIP or Linux tar.gz asset.
 2. Extract the **entire** archive. On Windows, open **Soapbox-Setup.exe**. On Ubuntu,
    open the executable **Soapbox-Setup**. A local setup page opens in your default browser.
 3. Choose **Buyer** or **GPU operator**, then **Check prerequisites**. Correct any failed
@@ -44,7 +44,7 @@ The installer never funds a job or switches the main wallet to testnet.
 
 Choose **GPU operator** in Compute and import the coordinator-issued operator enrollment.
 Its payout address is a Base Sepolia address you control; no signing key is required.
-Click **Prepare GPU runtime**. The approved rc1 runtime is included and its exact SHA-256
+Click **Prepare GPU runtime**. The approved rc3 runtime is included and its exact SHA-256
 is checked again before execution. Setup builds the fixed container image, downloads the
 pinned model and verifies isolated GPU execution. No second GitHub download is necessary.
 
@@ -75,8 +75,8 @@ No firewalls, DNS, VPNs or public ports are changed by this installer.
 
 ## Release boundaries
 
-The new installer/UI/plugin version is rc2; the bundled fixed-workload Rust runtime remains the
-previously verified rc1. SHA256SUMS and the per-file release manifest detect corruption; these
+The installer/UI/plugin and bundled fixed-workload Rust runtime are rc3.
+This candidate includes API disclosure fixes and tighter desktop funding/account boundaries. SHA256SUMS and the per-file release manifest detect corruption; these
 are not a publisher signing certificate. No credentials, enrolled identities, wallet files,
 databases, logs or cached models are distributed. Only approved CPU hashing and GPU embedding
 workloads run. GPU evidence remains worker-reported and embedding verification checks shape.

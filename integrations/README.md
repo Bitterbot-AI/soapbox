@@ -6,8 +6,6 @@ Build the desktop overlay against the exact installed release source with `node 
 
 ## Desktop setup preview
 
-The integration snapshot at desktop commit `8310273f57e953c0725251af33a7f5f5768913b2` adds **Compute → Set up buyer or operator**. Buyers can create a separate Base Sepolia wallet and import enrollment. Operators can import enrollment, upload the checksum-pinned runtime from the published release, prepare the GPU and activate with a resource allowance. All setup endpoints require an authenticated gateway admin. Mainnet wallet settings are preserved.
+The integration snapshot at desktop commit `0c9485fdce2ab73aa33d6d7f7c2461a4eed54d22` supplies **Compute → Set up buyer or operator** and preparation of the included, checksum-pinned GPU runtime. The private **v0.3.0-rc.2** release packages this UI/plugin with click-to-open Windows/WSL and Ubuntu launchers, prerequisite checks and guarded rollback. See [the installer guide](../docs/TEST-RELEASE.md).
 
-A fresh-profile RTX 4080 operator completed job `0c3a70ce-bc8f-4f91-8f99-a07b44bb237e` and received 0.002 test USDC after setup. Two 384-dimensional vectors, wallet separation and duplicate-settlement prevention were verified on two gateway profiles on one physical host. Physical two-machine validation is still pending. See the desktop patch’s `docs/network/soapbox.md` for the GUI guide and `soapbox-gui-validation.json` for evidence.
-
-The immutable v0.3.0-rc.1 archive remains the approved runtime input. Its bundled desktop UI predates this wizard; use a desktop build containing this updated integration snapshot. This snapshot does not publish or replace a stable Bitterbot release.
+Buyers initialize a separate Base Sepolia wallet; operators import scoped enrollment and prepare the bundled runtime without a second download. Admin authorization, wallet separation, approved-workload isolation and per-job funding remain enforced. The Rust execution runtime remains the approved rc1 build; all payments remain testnet-only. This is a private add-on for Bitterbot 1.8.0, not a new stable Bitterbot release.

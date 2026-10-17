@@ -1,6 +1,6 @@
 diff --git a/desktop/renderer/src/components/compute/ArtifactPanel.tsx b/desktop/renderer/src/components/compute/ArtifactPanel.tsx
 new file mode 100644
-index 0000000..c1cf1d2
+index 00000000..c1cf1d27
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/ArtifactPanel.tsx
 @@ -0,0 +1,80 @@
@@ -86,10 +86,10 @@ index 0000000..c1cf1d2
 +}
 diff --git a/desktop/renderer/src/components/compute/ComputeSetup.test.tsx b/desktop/renderer/src/components/compute/ComputeSetup.test.tsx
 new file mode 100644
-index 0000000..8b4465b
+index 00000000..a51b0b80
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/ComputeSetup.test.tsx
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,117 @@
 +import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 +import { afterEach, beforeEach, expect, it, vi } from "vitest";
 +import type { SoapboxSetupStatus } from "../../../../../src/infra/soapbox-setup-types";
@@ -189,12 +189,30 @@ index 0000000..8b4465b
 +  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull(), { timeout: 4000 });
 +  expect(screen.getByRole("button", { name: "Create test wallet" })).toBeTruthy();
 +});
++
++it("prepares the bundled runtime without asking the operator to download another archive", async () => {
++  status.bundledRuntimeAvailable = true;
++  status.enrollment = {
++    role: "operator",
++    id: "gpu-test",
++    url: "https://compute.example",
++    address: `0x${"2".repeat(40)}`,
++    chain_id: 84532,
++  };
++  render(<ComputeSetup onClose={() => {}} />);
++  fireEvent.click(await screen.findByRole("button", { name: "Prepare GPU runtime" }));
++  await waitFor(() => expect(fake.request).toHaveBeenCalledWith("soapbox.setup.runtime.bundled"));
++  expect(screen.queryByLabelText("GPU runtime archive")).toBeNull();
++  expect(
++    (screen.getByRole("button", { name: "Activate operator" }) as HTMLButtonElement).disabled,
++  ).toBe(true);
++});
 diff --git a/desktop/renderer/src/components/compute/ComputeSetup.tsx b/desktop/renderer/src/components/compute/ComputeSetup.tsx
 new file mode 100644
-index 0000000..81c99a3
+index 00000000..93207325
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/ComputeSetup.tsx
-@@ -0,0 +1,390 @@
+@@ -0,0 +1,412 @@
 +import { useCallback, useEffect, useState } from "react";
 +import type { SoapboxSetupStatus } from "../../../../../src/infra/soapbox-setup-types";
 +import { useGatewayStore } from "../../stores/gateway-store";
@@ -474,32 +492,54 @@ index 0000000..81c99a3
 +                    gateway, or choose Buyer.
 +                  </p>
 +                )}
-+                <p className="text-sm">
-+                  <a
-+                    className="underline"
-+                    href={status.release.url}
-+                    target="_blank"
-+                    rel="noreferrer"
-+                  >
-+                    Download the approved runtime from the private release
-+                  </a>
-+                  , then choose <span className="font-mono text-xs">{status.release.filename}</span>{" "}
-+                  below. GitHub access must be granted by the repository owner.
-+                </p>
-+                <label className="block text-sm">
-+                  GPU runtime archive
-+                  <input
-+                    className={field}
-+                    type="file"
-+                    accept=".gz"
-+                    disabled={locked || !enrolled || !status.platformSupported}
-+                    onChange={(e) => {
-+                      const file = e.target.files?.[0];
-+                      e.target.value = "";
-+                      if (file) void run(() => importRuntime(file));
-+                    }}
-+                  />
-+                </label>
++                {status.bundledRuntimeAvailable ? (
++                  <div className="space-y-2">
++                    <p className="text-sm">
++                      The approved GPU runtime is included in this installation.
++                    </p>
++                    <button
++                      className={button}
++                      disabled={locked || !enrolled || !status.platformSupported}
++                      onClick={() =>
++                        void run(async () => {
++                          await request("soapbox.setup.runtime.bundled");
++                        })
++                      }
++                    >
++                      Prepare GPU runtime
++                    </button>
++                  </div>
++                ) : (
++                  <>
++                    <p className="text-sm">
++                      <a
++                        className="underline"
++                        href={status.release.url}
++                        target="_blank"
++                        rel="noreferrer"
++                      >
++                        Download the approved runtime from the private release
++                      </a>
++                      , then choose{" "}
++                      <span className="font-mono text-xs">{status.release.filename}</span> below.
++                      GitHub access must be granted by the repository owner.
++                    </p>
++                    <label className="block text-sm">
++                      GPU runtime archive
++                      <input
++                        className={field}
++                        type="file"
++                        accept=".gz"
++                        disabled={locked || !enrolled || !status.platformSupported}
++                        onChange={(e) => {
++                          const file = e.target.files?.[0];
++                          e.target.value = "";
++                          if (file) void run(() => importRuntime(file));
++                        }}
++                      />
++                    </label>
++                  </>
++                )}
 +                {(upload !== undefined || status.progress.state !== "idle") && (
 +                  <div role="status" aria-live="polite">
 +                    <p className="text-sm">
@@ -587,7 +627,7 @@ index 0000000..81c99a3
 +}
 diff --git a/desktop/renderer/src/components/compute/ComputeView.test.tsx b/desktop/renderer/src/components/compute/ComputeView.test.tsx
 new file mode 100644
-index 0000000..2bfc5e1
+index 00000000..2bfc5e12
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/ComputeView.test.tsx
 @@ -0,0 +1,230 @@
@@ -823,7 +863,7 @@ index 0000000..2bfc5e1
 +});
 diff --git a/desktop/renderer/src/components/compute/ComputeView.tsx b/desktop/renderer/src/components/compute/ComputeView.tsx
 new file mode 100644
-index 0000000..b9f0213
+index 00000000..b9f02133
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/ComputeView.tsx
 @@ -0,0 +1,549 @@
@@ -1378,7 +1418,7 @@ index 0000000..b9f0213
 +}
 diff --git a/desktop/renderer/src/components/compute/ComputeWalletPanel.tsx b/desktop/renderer/src/components/compute/ComputeWalletPanel.tsx
 new file mode 100644
-index 0000000..7edcd4c
+index 00000000..7edcd4c9
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/ComputeWalletPanel.tsx
 @@ -0,0 +1,48 @@
@@ -1432,7 +1472,7 @@ index 0000000..7edcd4c
 +}
 diff --git a/desktop/renderer/src/components/compute/PaymentPanel.tsx b/desktop/renderer/src/components/compute/PaymentPanel.tsx
 new file mode 100644
-index 0000000..072011f
+index 00000000..072011f8
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/PaymentPanel.tsx
 @@ -0,0 +1,42 @@
@@ -1480,7 +1520,7 @@ index 0000000..072011f
 +}
 diff --git a/desktop/renderer/src/components/compute/WorkerPanel.tsx b/desktop/renderer/src/components/compute/WorkerPanel.tsx
 new file mode 100644
-index 0000000..e77cccf
+index 00000000..e77cccfa
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/WorkerPanel.tsx
 @@ -0,0 +1,72 @@
@@ -1557,7 +1597,7 @@ index 0000000..e77cccf
 +  );
 +}
 diff --git a/desktop/renderer/src/components/layout/AppShell.tsx b/desktop/renderer/src/components/layout/AppShell.tsx
-index 483aa00..4ce594e 100644
+index 483aa00e..4ce594ee 100644
 --- a/desktop/renderer/src/components/layout/AppShell.tsx
 +++ b/desktop/renderer/src/components/layout/AppShell.tsx
 @@ -6,6 +6,7 @@ import { ChatView } from "../chat/ChatView";
@@ -1577,7 +1617,7 @@ index 483aa00..4ce594e 100644
  };
  
 diff --git a/desktop/renderer/src/nav-manifest.ts b/desktop/renderer/src/nav-manifest.ts
-index 3292083..2a6c930 100644
+index 32920835..2a6c9300 100644
 --- a/desktop/renderer/src/nav-manifest.ts
 +++ b/desktop/renderer/src/nav-manifest.ts
 @@ -51,6 +51,7 @@ const NAV_MANIFEST_LITERAL = [
@@ -1590,7 +1630,7 @@ index 3292083..2a6c930 100644
    { id: "p2p", label: "P2P Network", icon: Globe, group: "advanced" },
 diff --git a/docs/network/soapbox-gui-validation.json b/docs/network/soapbox-gui-validation.json
 new file mode 100644
-index 0000000..b2b899f
+index 00000000..b2b899ff
 --- /dev/null
 +++ b/docs/network/soapbox-gui-validation.json
 @@ -0,0 +1,198 @@
@@ -1794,7 +1834,7 @@ index 0000000..b2b899f
 +}
 diff --git a/docs/network/soapbox-main-app-validation.json b/docs/network/soapbox-main-app-validation.json
 new file mode 100644
-index 0000000..52a75a3
+index 00000000..52a75a3a
 --- /dev/null
 +++ b/docs/network/soapbox-main-app-validation.json
 @@ -0,0 +1,41 @@
@@ -1841,7 +1881,7 @@ index 0000000..52a75a3
 +}
 diff --git a/docs/network/soapbox-release-validation.json b/docs/network/soapbox-release-validation.json
 new file mode 100644
-index 0000000..05759f9
+index 00000000..05759f9f
 --- /dev/null
 +++ b/docs/network/soapbox-release-validation.json
 @@ -0,0 +1,176 @@
@@ -2023,7 +2063,7 @@ index 0000000..05759f9
 +}
 diff --git a/docs/network/soapbox-ui-validation.json b/docs/network/soapbox-ui-validation.json
 new file mode 100644
-index 0000000..ff5f287
+index 00000000..ff5f2878
 --- /dev/null
 +++ b/docs/network/soapbox-ui-validation.json
 @@ -0,0 +1,24 @@
@@ -2053,10 +2093,10 @@ index 0000000..ff5f287
 +}
 diff --git a/docs/network/soapbox.md b/docs/network/soapbox.md
 new file mode 100644
-index 0000000..2c58b01
+index 00000000..d57cde61
 --- /dev/null
 +++ b/docs/network/soapbox.md
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,264 @@
 +---
 +summary: "Connect Bitterbot to the standalone Soapbox trusted compute pilot"
 +read_when:
@@ -2263,6 +2303,13 @@ index 0000000..2c58b01
 +
 +## Setup from the desktop app
 +
++The private Soapbox **v0.3.0-rc.2** add-on installs the wizard into Bitterbot 1.8.0 on
++Ubuntu 24.04 x64 / WSL2. Extract the release and open **Soapbox-Setup.exe** on Windows
++(using the default WSL distribution) or **Soapbox-Setup** on Ubuntu. The local setup page
++checks prerequisites, installs the integration and offers guarded rollback. Wallet files are
++preserved. Restart Bitterbot normally if it does not reconnect automatically. This unsigned
++test preview does not install Docker/drivers or change security settings.
++
 +In an updated Bitterbot desktop app, open **Compute → Set up buyer or operator**.
 +The bundled extension registers setup without starting a coordinator or worker. Setup requires
 +an authenticated `operator.admin` session. Existing pilot/participant configurations remain
@@ -2286,9 +2333,9 @@ index 0000000..2c58b01
 +
 +1. Select **GPU operator** and import the operator enrollment provided by the coordinator owner.
 +   Its payment address is the operator's Base Sepolia payout address; signing keys are unnecessary.
-+2. Download the linked runtime archive from the private Soapbox release using a GitHub account
-+   with repository access, then select it in **GPU runtime archive**. The gateway accepts only
-+   the exact size and SHA-256 of the approved release, before extraction or execution.
++2. Click **Prepare GPU runtime** when the installer has included the runtime. For earlier
++   source integrations, download the linked archive and select it in **GPU runtime archive**.
++   Both paths require the exact size and SHA-256 of the approved runtime before execution.
 +3. Watch setup check Docker/NVIDIA, build the pinned image, download the approved embedding
 +   model, and verify GPU execution in isolation. The gateway must run on Ubuntu x64 or WSL2,
 +   with Docker/NVIDIA support, swap limits and at least 3 GB of free disk space already available.
@@ -2312,18 +2359,18 @@ index 0000000..2c58b01
 +activation, operator enrollment/upload/activation, and a paid isolated GPU job that transferred
 +0.002 Base Sepolia USDC to the operator. The buyer-only test enrollment was revoked afterward.
 +The evidence is in `soapbox-gui-validation.json`; 32 focused tests and the workspace TypeScript
-+check also passed. The immutable v0.3.0-rc.1 runtime archive predates this setup UI, so testers
-+need a desktop build containing the updated integration snapshot from the private Soapbox repo.
++check also passed. The immutable v0.3.0-rc.1 runtime remains the execution input; the rc2
++installer packages it with the updated UI/plugin and prerequisite/rollback tools.
 diff --git a/extensions/soapbox-compute/bitterbot.plugin.json b/extensions/soapbox-compute/bitterbot.plugin.json
 new file mode 100644
-index 0000000..70eba2a
+index 00000000..e86a5f8d
 --- /dev/null
 +++ b/extensions/soapbox-compute/bitterbot.plugin.json
-@@ -0,0 +1,16 @@
+@@ -0,0 +1,17 @@
 +{
 +  "id": "soapbox-compute",
 +  "name": "Soapbox Compute",
-+  "version": "0.3.0-rc.1",
++  "version": "0.3.0-rc.2",
 +  "description": "Isolated compute with a separate Base Sepolia wallet",
 +  "configSchema": {
 +    "type": "object",
@@ -2331,6 +2378,7 @@ index 0000000..70eba2a
 +    "properties": {
 +      "mode": { "type": "string", "enum": ["setup", "pilot", "participant"] },
 +      "binary": { "type": "string", "minLength": 1 },
++      "bundledRuntimeArchive": { "type": "string", "minLength": 1 },
 +      "repository": { "type": "string", "minLength": 1 },
 +      "stateDirectory": { "type": "string", "minLength": 1 }
 +    }
@@ -2338,10 +2386,10 @@ index 0000000..70eba2a
 +}
 diff --git a/extensions/soapbox-compute/index.ts b/extensions/soapbox-compute/index.ts
 new file mode 100644
-index 0000000..715cd9c
+index 00000000..51bfb930
 --- /dev/null
 +++ b/extensions/soapbox-compute/index.ts
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,116 @@
 +import type { BitterbotPluginApi } from "bitterbot/plugin-sdk";
 +import { spawn, type ChildProcess } from "node:child_process";
 +import { closeSync, openSync, readFileSync } from "node:fs";
@@ -2364,6 +2412,10 @@ index 0000000..715cd9c
 +      root: path.join(resolveStateDir(), "compute/setup"),
 +      configPath: resolveConfigPath(),
 +      mainWallet: api.config.tools?.wallet,
++      bundledRuntimeArchive:
++        typeof api.pluginConfig?.bundledRuntimeArchive === "string"
++          ? api.pluginConfig.bundledRuntimeArchive
++          : undefined,
 +      configuredRole: setupOnly
 +        ? undefined
 +        : api.pluginConfig?.mode === "participant"
@@ -2456,13 +2508,13 @@ index 0000000..715cd9c
 +};
 diff --git a/extensions/soapbox-compute/package.json b/extensions/soapbox-compute/package.json
 new file mode 100644
-index 0000000..eaed06f
+index 00000000..fda30fbb
 --- /dev/null
 +++ b/extensions/soapbox-compute/package.json
 @@ -0,0 +1,10 @@
 +{
 +  "name": "@bitterbot/soapbox-compute",
-+  "version": "0.2.0",
++  "version": "0.3.0-rc.2",
 +  "type": "module",
 +  "bitterbot": {
 +    "extensions": [
@@ -2472,7 +2524,7 @@ index 0000000..eaed06f
 +}
 diff --git a/extensions/soapbox-compute/participant.ts b/extensions/soapbox-compute/participant.ts
 new file mode 100644
-index 0000000..7bbe7f0
+index 00000000..7bbe7f03
 --- /dev/null
 +++ b/extensions/soapbox-compute/participant.ts
 @@ -0,0 +1,80 @@
@@ -2558,7 +2610,7 @@ index 0000000..7bbe7f0
 +}
 diff --git a/scripts/build-soapbox-integration.mjs b/scripts/build-soapbox-integration.mjs
 new file mode 100644
-index 0000000..5ab23e5
+index 00000000..5ab23e5e
 --- /dev/null
 +++ b/scripts/build-soapbox-integration.mjs
 @@ -0,0 +1,131 @@
@@ -2695,7 +2747,7 @@ index 0000000..5ab23e5
 +console.log(`Compute integration built for Bitterbot ${version}: ${output}`);
 diff --git a/scripts/install-soapbox-main.mjs b/scripts/install-soapbox-main.mjs
 new file mode 100644
-index 0000000..9d57d76
+index 00000000..9d57d76b
 --- /dev/null
 +++ b/scripts/install-soapbox-main.mjs
 @@ -0,0 +1,129 @@
@@ -2830,7 +2882,7 @@ index 0000000..9d57d76
 +}
 diff --git a/scripts/soapbox-buyer-wallet.ts b/scripts/soapbox-buyer-wallet.ts
 new file mode 100644
-index 0000000..12ef240
+index 00000000..12ef240d
 --- /dev/null
 +++ b/scripts/soapbox-buyer-wallet.ts
 @@ -0,0 +1,24 @@
@@ -2860,7 +2912,7 @@ index 0000000..12ef240
 +});
 diff --git a/scripts/soapbox-desktop-pilot.ps1 b/scripts/soapbox-desktop-pilot.ps1
 new file mode 100644
-index 0000000..ba2f067
+index 00000000..ba2f0677
 --- /dev/null
 +++ b/scripts/soapbox-desktop-pilot.ps1
 @@ -0,0 +1,62 @@
@@ -2928,7 +2980,7 @@ index 0000000..ba2f067
 +}
 diff --git a/scripts/soapbox-desktop-pilot.sh b/scripts/soapbox-desktop-pilot.sh
 new file mode 100644
-index 0000000..0a9f458
+index 00000000..0a9f458c
 --- /dev/null
 +++ b/scripts/soapbox-desktop-pilot.sh
 @@ -0,0 +1,39 @@
@@ -2973,7 +3025,7 @@ index 0000000..0a9f458
 +esac
 diff --git a/scripts/soapbox-desktop-pilot.ts b/scripts/soapbox-desktop-pilot.ts
 new file mode 100644
-index 0000000..accf951
+index 00000000..accf951f
 --- /dev/null
 +++ b/scripts/soapbox-desktop-pilot.ts
 @@ -0,0 +1,375 @@
@@ -3354,7 +3406,7 @@ index 0000000..accf951
 +}
 diff --git a/scripts/soapbox-gpu-pilot.ps1 b/scripts/soapbox-gpu-pilot.ps1
 new file mode 100644
-index 0000000..1aaa77c
+index 00000000..1aaa77c4
 --- /dev/null
 +++ b/scripts/soapbox-gpu-pilot.ps1
 @@ -0,0 +1,47 @@
@@ -3407,7 +3459,7 @@ index 0000000..1aaa77c
 +}
 diff --git a/scripts/soapbox-main-gateway.sh b/scripts/soapbox-main-gateway.sh
 new file mode 100644
-index 0000000..36a3a88
+index 00000000..36a3a888
 --- /dev/null
 +++ b/scripts/soapbox-main-gateway.sh
 @@ -0,0 +1,5 @@
@@ -3418,7 +3470,7 @@ index 0000000..36a3a88
 +exec ./bin/bitterbot gateway run --port 19001 --bind loopback >>"$HOME/.bitterbot/compute/main-gateway.log" 2>&1
 diff --git a/scripts/soapbox-payment-smoke.ts b/scripts/soapbox-payment-smoke.ts
 new file mode 100644
-index 0000000..10bb6e7
+index 00000000..10bb6e7a
 --- /dev/null
 +++ b/scripts/soapbox-payment-smoke.ts
 @@ -0,0 +1,419 @@
@@ -3843,7 +3895,7 @@ index 0000000..10bb6e7
 +}
 diff --git a/scripts/soapbox-release-acceptance.ts b/scripts/soapbox-release-acceptance.ts
 new file mode 100644
-index 0000000..e8a819f
+index 00000000..e8a819fd
 --- /dev/null
 +++ b/scripts/soapbox-release-acceptance.ts
 @@ -0,0 +1,175 @@
@@ -4024,7 +4076,7 @@ index 0000000..e8a819f
 +}
 diff --git a/scripts/soapbox-smoke.ts b/scripts/soapbox-smoke.ts
 new file mode 100644
-index 0000000..6608377
+index 00000000..6608377f
 --- /dev/null
 +++ b/scripts/soapbox-smoke.ts
 @@ -0,0 +1,312 @@
@@ -4342,7 +4394,7 @@ index 0000000..6608377
 +}
 diff --git a/scripts/soapbox-testnet-provision.ts b/scripts/soapbox-testnet-provision.ts
 new file mode 100644
-index 0000000..f00dd8c
+index 00000000..f00dd8c3
 --- /dev/null
 +++ b/scripts/soapbox-testnet-provision.ts
 @@ -0,0 +1,66 @@
@@ -4413,10 +4465,10 @@ index 0000000..f00dd8c
 +await mkdir(path.dirname(output), { recursive: true });
 +await writeFile(output, JSON.stringify(accounts, null, 2), { mode: 0o600 });
 diff --git a/src/gateway/server-methods-list.ts b/src/gateway/server-methods-list.ts
-index 1729b25..750c8ba 100644
+index 1729b253..ba0ad100 100644
 --- a/src/gateway/server-methods-list.ts
 +++ b/src/gateway/server-methods-list.ts
-@@ -1,6 +1,24 @@
+@@ -1,6 +1,25 @@
  import { listChannelPlugins } from "../channels/plugins/index.js";
  
  const BASE_METHODS = [
@@ -4426,6 +4478,7 @@ index 1729b25..750c8ba 100644
 +  "soapbox.setup.runtime.begin",
 +  "soapbox.setup.runtime.chunk",
 +  "soapbox.setup.runtime.prepare",
++  "soapbox.setup.runtime.bundled",
 +  "soapbox.setup.activate",
 +  "soapbox.status",
 +  "soapbox.wallet",
@@ -4443,7 +4496,7 @@ index 1729b25..750c8ba 100644
    "logs.tail",
 diff --git a/src/gateway/server-methods.soapbox-scopes.test.ts b/src/gateway/server-methods.soapbox-scopes.test.ts
 new file mode 100644
-index 0000000..05e6d79
+index 00000000..05e6d797
 --- /dev/null
 +++ b/src/gateway/server-methods.soapbox-scopes.test.ts
 @@ -0,0 +1,29 @@
@@ -4477,7 +4530,7 @@ index 0000000..05e6d79
 +  });
 +});
 diff --git a/src/gateway/server-methods.ts b/src/gateway/server-methods.ts
-index 550efc4..808125f 100644
+index 550efc47..808125f2 100644
 --- a/src/gateway/server-methods.ts
 +++ b/src/gateway/server-methods.ts
 @@ -27,6 +27,7 @@ import { projectsHandlers } from "./server-methods/projects.js";
@@ -4525,10 +4578,10 @@ index 550efc4..808125f 100644
    ...voicewakeHandlers,
 diff --git a/src/gateway/server-methods/soapbox-setup.ts b/src/gateway/server-methods/soapbox-setup.ts
 new file mode 100644
-index 0000000..5095303
+index 00000000..dbbc8052
 --- /dev/null
 +++ b/src/gateway/server-methods/soapbox-setup.ts
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,66 @@
 +import type { SoapboxSetup } from "../../services/soapbox-setup.js";
 +import type { GatewayRequestHandlers } from "./types.js";
 +import { ErrorCodes, errorShape } from "../protocol/index.js";
@@ -4553,6 +4606,10 @@ index 0000000..5095303
 +    "runtime.prepare": async (p) => {
 +      setup.requireOperator();
 +      await setup.runtime.prepare(p.id);
++      return setup.status();
++    },
++    "runtime.bundled": async () => {
++      await setup.prepareBundledRuntime();
 +      return setup.status();
 +    },
 +    activate: () => setup.activate(),
@@ -4593,7 +4650,7 @@ index 0000000..5095303
 +}
 diff --git a/src/gateway/server-methods/soapbox.test.ts b/src/gateway/server-methods/soapbox.test.ts
 new file mode 100644
-index 0000000..51d169e
+index 00000000..51d169ef
 --- /dev/null
 +++ b/src/gateway/server-methods/soapbox.test.ts
 @@ -0,0 +1,102 @@
@@ -4701,7 +4758,7 @@ index 0000000..51d169e
 +});
 diff --git a/src/gateway/server-methods/soapbox.ts b/src/gateway/server-methods/soapbox.ts
 new file mode 100644
-index 0000000..d4952ef
+index 00000000..d4952ef2
 --- /dev/null
 +++ b/src/gateway/server-methods/soapbox.ts
 @@ -0,0 +1,129 @@
@@ -4835,7 +4892,7 @@ index 0000000..d4952ef
 +
 +export const soapboxHandlers = createSoapboxHandlers();
 diff --git a/src/gateway/server.impl.ts b/src/gateway/server.impl.ts
-index 2d03e79..f9e632d 100644
+index 2d03e794..f9e632d9 100644
 --- a/src/gateway/server.impl.ts
 +++ b/src/gateway/server.impl.ts
 @@ -43,6 +43,7 @@ import {
@@ -4887,7 +4944,7 @@ index 2d03e79..f9e632d 100644
    };
 diff --git a/src/infra/soapbox-client.test.ts b/src/infra/soapbox-client.test.ts
 new file mode 100644
-index 0000000..8030628
+index 00000000..80306282
 --- /dev/null
 +++ b/src/infra/soapbox-client.test.ts
 @@ -0,0 +1,73 @@
@@ -4966,7 +5023,7 @@ index 0000000..8030628
 +});
 diff --git a/src/infra/soapbox-client.ts b/src/infra/soapbox-client.ts
 new file mode 100644
-index 0000000..3111eb4
+index 00000000..3111eb4d
 --- /dev/null
 +++ b/src/infra/soapbox-client.ts
 @@ -0,0 +1,179 @@
@@ -5151,7 +5208,7 @@ index 0000000..3111eb4
 +}
 diff --git a/src/infra/soapbox-connection.test.ts b/src/infra/soapbox-connection.test.ts
 new file mode 100644
-index 0000000..4d34a7a
+index 00000000..4d34a7aa
 --- /dev/null
 +++ b/src/infra/soapbox-connection.test.ts
 @@ -0,0 +1,55 @@
@@ -5212,7 +5269,7 @@ index 0000000..4d34a7a
 +});
 diff --git a/src/infra/soapbox-connection.ts b/src/infra/soapbox-connection.ts
 new file mode 100644
-index 0000000..6e785db
+index 00000000..6e785db7
 --- /dev/null
 +++ b/src/infra/soapbox-connection.ts
 @@ -0,0 +1,62 @@
@@ -5280,7 +5337,7 @@ index 0000000..6e785db
 +}
 diff --git a/src/infra/soapbox-service.ts b/src/infra/soapbox-service.ts
 new file mode 100644
-index 0000000..040d0dd
+index 00000000..040d0dd9
 --- /dev/null
 +++ b/src/infra/soapbox-service.ts
 @@ -0,0 +1,105 @@
@@ -5391,14 +5448,15 @@ index 0000000..040d0dd
 +}
 diff --git a/src/infra/soapbox-setup-types.ts b/src/infra/soapbox-setup-types.ts
 new file mode 100644
-index 0000000..7e161a7
+index 00000000..68a58018
 --- /dev/null
 +++ b/src/infra/soapbox-setup-types.ts
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,21 @@
 +export type SoapboxSetupStatus = {
 +  configured: boolean;
 +  configuredRole?: string;
 +  platformSupported: boolean;
++  bundledRuntimeAvailable?: boolean;
 +  hasWalletCredentials: boolean;
 +  walletAddress: string | null;
 +  release: { url: string; filename: string; bytes: number };
@@ -5416,7 +5474,7 @@ index 0000000..7e161a7
 +  };
 +};
 diff --git a/src/plugins/config-state.ts b/src/plugins/config-state.ts
-index e596d6c..2743d90 100644
+index e596d6ca..2743d900 100644
 --- a/src/plugins/config-state.ts
 +++ b/src/plugins/config-state.ts
 @@ -30,6 +30,8 @@ export const BUNDLED_ENABLED_BY_DEFAULT = new Set<string>([
@@ -5430,7 +5488,7 @@ index e596d6c..2743d90 100644
  const normalizeList = (value: unknown): string[] => {
 diff --git a/src/services/soapbox-payment.test.ts b/src/services/soapbox-payment.test.ts
 new file mode 100644
-index 0000000..d05ad7d
+index 00000000..d05ad7d6
 --- /dev/null
 +++ b/src/services/soapbox-payment.test.ts
 @@ -0,0 +1,35 @@
@@ -5471,7 +5529,7 @@ index 0000000..d05ad7d
 +});
 diff --git a/src/services/soapbox-payment.ts b/src/services/soapbox-payment.ts
 new file mode 100644
-index 0000000..91048ed
+index 00000000..91048ed6
 --- /dev/null
 +++ b/src/services/soapbox-payment.ts
 @@ -0,0 +1,115 @@
@@ -5592,7 +5650,7 @@ index 0000000..91048ed
 +}
 diff --git a/src/services/soapbox-setup-runtime.test.ts b/src/services/soapbox-setup-runtime.test.ts
 new file mode 100644
-index 0000000..fc01eaf
+index 00000000..fc01eaf6
 --- /dev/null
 +++ b/src/services/soapbox-setup-runtime.test.ts
 @@ -0,0 +1,49 @@
@@ -5647,7 +5705,7 @@ index 0000000..fc01eaf
 +);
 diff --git a/src/services/soapbox-setup-runtime.ts b/src/services/soapbox-setup-runtime.ts
 new file mode 100644
-index 0000000..375f5a2
+index 00000000..375f5a23
 --- /dev/null
 +++ b/src/services/soapbox-setup-runtime.ts
 @@ -0,0 +1,281 @@
@@ -5934,10 +5992,10 @@ index 0000000..375f5a2
 +}
 diff --git a/src/services/soapbox-setup.test.ts b/src/services/soapbox-setup.test.ts
 new file mode 100644
-index 0000000..21ee9c9
+index 00000000..5e498e57
 --- /dev/null
 +++ b/src/services/soapbox-setup.test.ts
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,157 @@
 +import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 +import { tmpdir } from "node:os";
 +import path from "node:path";
@@ -6078,16 +6136,32 @@ index 0000000..21ee9c9
 +    } as GatewayRequestHandlerOptions);
 +    expect(respond).toHaveBeenCalledWith(true, expect.objectContaining({ configured: false }));
 +  });
++  it("does not prepare a bundled runtime before operator enrollment or with damaged bytes", async () => {
++    const archive = path.join(directory, "runtime.tar.gz");
++    await writeFile(archive, "damaged");
++    const bundled = new SoapboxSetup({
++      root: directory,
++      configPath,
++      bundledRuntimeArchive: archive,
++    });
++    await expect(bundled.prepareBundledRuntime()).rejects.toThrow("operator enrollment");
++    coordinatorStatus.mockResolvedValue({
++      principal: { id: "tester", roles: ["worker"] },
++      payment_account: { chain_id: 84532, address },
++    } as SoapboxStatus);
++    await bundled.import({ ...connection, role: "operator" }, "operator");
++    await expect(bundled.prepareBundledRuntime()).rejects.toThrow("damaged");
++  });
 +});
 diff --git a/src/services/soapbox-setup.ts b/src/services/soapbox-setup.ts
 new file mode 100644
-index 0000000..edeed85
+index 00000000..7af17dbd
 --- /dev/null
 +++ b/src/services/soapbox-setup.ts
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,204 @@
 +import JSON5 from "json5";
 +import { randomUUID } from "node:crypto";
-+import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
++import { copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 +import path from "node:path";
 +import type { BitterbotConfig } from "../config/types.js";
 +import type { WalletConfig } from "../config/types.wallet.js";
@@ -6117,6 +6191,7 @@ index 0000000..edeed85
 +      configPath: string;
 +      mainWallet?: WalletConfig;
 +      configuredRole?: string;
++      bundledRuntimeArchive?: string;
 +    },
 +  ) {
 +    this.runtime = new SoapboxSetupRuntime(path.join(options.root, "runtime"));
@@ -6129,6 +6204,7 @@ index 0000000..edeed85
 +      configured: Boolean(this.options.configuredRole || this.activated),
 +      configuredRole: this.options.configuredRole ?? (this.activated ? c?.role : undefined),
 +      platformSupported: process.platform === "linux" && process.arch === "x64",
++      bundledRuntimeAvailable: Boolean(this.options.bundledRuntimeArchive),
 +      hasWalletCredentials: Boolean(auth.apiKeyId && auth.apiKeySecret && auth.walletSecret),
 +      walletAddress: await soapboxWalletIdentity(),
 +      release: {
@@ -6215,6 +6291,24 @@ index 0000000..edeed85
 +      throw new Error("Verify an operator enrollment first");
 +  }
 +
++  async prepareBundledRuntime(): Promise<void> {
++    this.requireOperator();
++    const archive = this.options.bundledRuntimeArchive;
++    if (!archive || !path.isAbsolute(archive)) throw new Error("Bundled runtime unavailable");
++    if ((await stat(archive)).size !== SOAPBOX_SETUP_RELEASE.bytes)
++      throw new Error("Bundled runtime is damaged; reinstall the test release");
++    const bytes = await readFile(archive);
++    const { id } = await this.runtime.begin();
++    for (let offset = 0; offset < bytes.length; offset += 262144)
++      await this.runtime.chunk(
++        id,
++        offset,
++        bytes.subarray(offset, offset + 262144).toString("base64"),
++      );
++    // Uses the same pinned SHA-256 and sandbox checks as a browser upload.
++    await this.runtime.prepare(id);
++  }
++
 +  async activate(): Promise<{ activated: true }> {
 +    const c = this.enrollment;
 +    if (!c) throw new Error("Import an enrollment first");
@@ -6271,7 +6365,7 @@ index 0000000..edeed85
 +}
 diff --git a/src/services/soapbox-wallet-onboarding.test.ts b/src/services/soapbox-wallet-onboarding.test.ts
 new file mode 100644
-index 0000000..b69c297
+index 00000000..b69c2970
 --- /dev/null
 +++ b/src/services/soapbox-wallet-onboarding.test.ts
 @@ -0,0 +1,64 @@
@@ -6341,7 +6435,7 @@ index 0000000..b69c297
 +});
 diff --git a/src/services/soapbox-wallet.test.ts b/src/services/soapbox-wallet.test.ts
 new file mode 100644
-index 0000000..adb8418
+index 00000000..adb84181
 --- /dev/null
 +++ b/src/services/soapbox-wallet.test.ts
 @@ -0,0 +1,33 @@
@@ -6380,7 +6474,7 @@ index 0000000..adb8418
 +});
 diff --git a/src/services/soapbox-wallet.ts b/src/services/soapbox-wallet.ts
 new file mode 100644
-index 0000000..806062b
+index 00000000..806062bc
 --- /dev/null
 +++ b/src/services/soapbox-wallet.ts
 @@ -0,0 +1,162 @@
@@ -6548,7 +6642,7 @@ index 0000000..806062b
 +}
 diff --git a/src/services/wallet-service.soapbox.test.ts b/src/services/wallet-service.soapbox.test.ts
 new file mode 100644
-index 0000000..36faac7
+index 00000000..36faac7f
 --- /dev/null
 +++ b/src/services/wallet-service.soapbox.test.ts
 @@ -0,0 +1,98 @@
@@ -6651,7 +6745,7 @@ index 0000000..36faac7
 +  });
 +});
 diff --git a/src/services/wallet-service.ts b/src/services/wallet-service.ts
-index cd815a5..1e1b514 100644
+index cd815a51..1e1b5146 100644
 --- a/src/services/wallet-service.ts
 +++ b/src/services/wallet-service.ts
 @@ -39,6 +39,9 @@ export type X402PaymentResult = {

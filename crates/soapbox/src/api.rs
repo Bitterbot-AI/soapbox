@@ -1,5 +1,6 @@
 use crate::{
     config::{Config, Principal},
+    error::UserFacing,
     model::*,
     store::Store,
 };
@@ -46,19 +47,53 @@ impl App {
             )
         })?;
         f(&mut store).map_err(|e| {
-            if e.downcast_ref::<rusqlite::Error>().is_some() {
-                eprintln!("soapbox database operation failed: {e}");
-                ApiError(
+            if let Some(public) = e.downcast_ref::<UserFacing>() {
+                ApiError(public.status, public.message.into())
+            } else if e.downcast_ref::<rusqlite::Error>().is_some() {
+                ApiError::opaque(
+                    &e,
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "database operation failed".into(),
+                    "database operation failed",
                 )
             } else {
-                ApiError(StatusCode::BAD_REQUEST, e.to_string())
+                ApiError::opaque(
+                    &e,
+                    StatusCode::BAD_REQUEST,
+                    "request could not be processed",
+                )
             }
         })
     }
 }
+#[derive(Debug)]
 pub struct ApiError(pub StatusCode, pub String);
+impl ApiError {
+    pub(crate) fn opaque(error: &anyhow::Error, status: StatusCode, message: &'static str) -> Self {
+        let reference = uuid::Uuid::new_v4();
+        // Error Display and source chains may contain URLs, response data or credentials.
+        // Log only a closed category and a correlation id, never arbitrary error text.
+        let category = if error.downcast_ref::<rusqlite::Error>().is_some() {
+            "database"
+        } else if let Some(rpc) = error.downcast_ref::<reqwest::Error>() {
+            if rpc.is_timeout() {
+                "rpc_timeout"
+            } else if rpc.is_connect() {
+                "rpc_connect"
+            } else if rpc.is_status() {
+                "rpc_http_status"
+            } else {
+                "rpc_transport"
+            }
+        } else {
+            "internal"
+        };
+        eprintln!(
+            "soapbox request failed reference={reference} category={category} status={}",
+            status.as_u16()
+        );
+        Self(status, format!("{message}; reference={reference}"))
+    }
+}
 type ApiResult<T> = std::result::Result<T, ApiError>;
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
@@ -152,7 +187,9 @@ async fn job(
 ) -> ApiResult<Json<Job>> {
     app.with(|s| {
         let job = s.job(&id)?;
-        anyhow::ensure!(p.can_read_job(&job), "job not accessible");
+        if !p.can_read_job(&job) {
+            return Err(UserFacing::forbidden("job not accessible").into());
+        }
         Ok(Json(job))
     })
 }

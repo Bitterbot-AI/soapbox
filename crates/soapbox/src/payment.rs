@@ -2,6 +2,7 @@
 use crate::{
     api::{ApiError, App},
     config::Principal,
+    error::UserFacing,
     model::*,
 };
 use anyhow::{ensure, Context, Result};
@@ -160,10 +161,16 @@ impl PaymentConfig {
             .post(&self.rpc_url)
             .json(&json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))
             .send()
-            .await?
-            .error_for_status()?;
+            .await
+            .map_err(reqwest::Error::without_url)?
+            .error_for_status()
+            .map_err(reqwest::Error::without_url)?;
         let mut data = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(reqwest::Error::without_url)?
+        {
             ensure!(
                 data.len() + chunk.len() <= 2_097_152,
                 "RPC response too large"
@@ -362,17 +369,22 @@ pub async fn refresh(
 ) -> std::result::Result<Json<Job>, ApiError> {
     let (job, cfg) = app.with(|s| {
         let job = s.job(&id)?;
-        ensure!(job.owner == p.id || p.has("admin"), "job not accessible");
+        if job.owner != p.id && !p.has("admin") {
+            return Err(UserFacing::forbidden("job not accessible").into());
+        }
         Ok((job, s.payments.clone().context("USDC disabled")?))
     })?;
     let payment = job
         .payment
         .as_ref()
         .ok_or_else(|| ApiError(StatusCode::BAD_REQUEST, "not a USDC job".into()))?;
-    let observation = cfg
-        .observe(payment)
-        .await
-        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let observation = cfg.observe(payment).await.map_err(|e| {
+        ApiError::opaque(
+            &e,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "payment verification unavailable",
+        )
+    })?;
     app.with(|s| Ok(Json(s.apply_payment(&id, observation)?)))
 }
 pub async fn intents(
@@ -380,7 +392,9 @@ pub async fn intents(
     Extension(p): Extension<Principal>,
 ) -> std::result::Result<Json<Vec<Value>>, ApiError> {
     app.with(|s| {
-        ensure!(p.has("admin"), "admin role required");
+        if !p.has("admin") {
+            return Err(UserFacing::forbidden("admin role required").into());
+        }
         Ok(Json(s.payment_jobs()?.into_iter().map(|j| json!({"id":j.id,"status":j.status,"payment":j.payment,"result_sha256":j.receipt.and_then(|r|r.get("result_sha256").cloned())})).collect()))
     })
 }

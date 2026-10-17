@@ -25,6 +25,8 @@ test("enrollment rejects mainnet, cleartext remote credentials and embedded cred
     { url: "http://remote.example" },
     { url: "https://user:pass@example.com" },
     { role: "admin" },
+    { rpc_url: "https://provider.example/v2/private-provider-key" },
+    { rpc_url: "https://sepolia.base.org?api-key=private-provider-key" },
     { address: `0x${"0".repeat(40)}` },
   ])
     assert.throws(() => connection({ ...c, ...patch }));
@@ -33,7 +35,7 @@ test("enrollment rejects mainnet, cleartext remote credentials and embedded cred
 test("scoped enrollment exports no coordinator or wallet secrets and rejects duplicate IDs", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "soapbox-enroll-"));
   await privateJson(path.join(root, "coordinator.json"), {
-    payments: { ...c, chain_id: 84532, wallets: { buyer: c.address } },
+    payments: { ...c, chain_id: 84532, wallets: { buyer: c.address }, rpc_url: "https://provider.example/v2/private-provider-key" },
     principals: [{ id: "buyer", token: "coordinator-secret" }],
   });
   const out = path.join(root, "operator.json");
@@ -49,6 +51,8 @@ test("scoped enrollment exports no coordinator or wallet secrets and rejects dup
   assert.equal(value.role, "operator");
   assert.equal(value.chain_id, 84532);
   assert.equal(value.wallets, undefined);
+  assert.equal(value.rpc_url, "https://sepolia.base.org");
+  assert.ok(!(await readFile(out, "utf8")).includes("private-provider-key"));
   assert.ok(!(await readFile(out, "utf8")).includes("coordinator-secret"));
   assert.equal((await stat(out)).mode & 0o777, 0o600);
   await assert.rejects(

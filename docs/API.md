@@ -6,6 +6,15 @@ All routes require Authorization: Bearer <credential>. The JSON API has no CORS 
 interface. Bind to loopback or put the service behind a TLS reverse proxy on a trusted network.
 Errors are JSON { "error": "..." } except malformed extractor/body errors from the HTTP framework.
 
+## Error disclosure
+
+Only explicitly classified static validation messages are returned to clients.
+Unknown internal errors use a generic message and correlation reference. Missing
+jobs/artifacts return 404; unauthorized job access and settlement listing return
+403. Payment observation failures return 503 so clients can retry. Server logs
+contain the same correlation reference and a closed error category, without
+error Display strings, provider URLs or response bodies.
+
 ## Routes
 
 | Method | Route | Required authority |

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import path from "node:path";
+export const PUBLIC_SEPOLIA_RPC = "https://sepolia.base.org";
 export const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
 export const address = (value) =>
   typeof value === "string" && /^0x[\da-f]{40}$/i.test(value) && !/^0x0{40}$/i.test(value);
@@ -26,8 +27,10 @@ export function connection(c) {
   assert.match(c.token, /^[\da-f]{64}$/i);
   assert.match(c.escrow_code_sha256, /^[\da-f]{64}$/i);
   url(c.url);
-  const rpc = new URL(c.rpc_url);
-  assert.ok(rpc.protocol === "https:" && !rpc.username && !rpc.password && !rpc.hash);
+  assert.ok(
+    c.rpc_url === PUBLIC_SEPOLIA_RPC || c.rpc_url === `${PUBLIC_SEPOLIA_RPC}/`,
+    "Participant enrollment requires the public Base Sepolia RPC endpoint",
+  );
   return Object.fromEntries(
     [
       "version",

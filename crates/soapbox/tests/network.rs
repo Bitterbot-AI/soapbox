@@ -197,3 +197,138 @@ async fn real_worker_processes_execute_all_modes_and_store_artifacts() {
     assert_eq!(retrieved["content"], "a shared result");
     server.abort();
 }
+#[tokio::test]
+async fn error_responses_classify_access_without_disclosing_internal_data() {
+    use http_body_util::BodyExt;
+    let state = app(std::path::Path::new(":memory:"));
+    let id = state.store.lock().unwrap().submit(
+        &principal("buyer", &["submitter"]),
+        serde_json::from_value(json!({"idempotency_key":"error-gates","mode":{"kind":"private","pool_id":"circle"},"workload":{"kind":"sha256","texts":["x"]}})).unwrap(),
+        soapbox::model::now(),
+    ).unwrap().id;
+    let router = api::router(state.clone());
+    for (path, token, expected) in [
+        ("/v1/jobs/missing".to_string(), BUYER, 404),
+        ("/v1/artifacts/missing".to_string(), BUYER, 404),
+        (format!("/v1/jobs/{id}"), WORKER, 403),
+        ("/v1/settlements".to_string(), WORKER, 403),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), expected);
+    }
+    state.store.lock().unwrap().db.execute("UPDATE jobs SET data=?1 WHERE id=?2",
+        rusqlite::params![r#"{"status":"private-provider-key","spec":{"mode":{"kind":"https://provider.example/private-provider-key"}}}"#,id]).unwrap();
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/jobs/{id}"))
+                .header("authorization", format!("Bearer {BUYER}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 400);
+    let body = String::from_utf8(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(body.contains("request could not be processed; reference="));
+    assert!(!body.contains("private-provider-key"));
+    assert!(!body.contains("provider.example"));
+    assert!(!body.contains("missing field"));
+}
+
+#[tokio::test]
+async fn failing_keyed_rpc_is_redacted_in_observe_and_refresh() {
+    use http_body_util::BodyExt;
+    use soapbox::payment::PaymentConfig;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc_url = format!(
+        "http://{}/v2/private-provider-key?secret=private-query-key",
+        listener.local_addr().unwrap()
+    );
+    let rpc = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            axum::Router::new().fallback(|| async {
+                (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    "upstream-private-response",
+                )
+            }),
+        )
+        .await
+        .unwrap()
+    });
+    let config: PaymentConfig = serde_json::from_value(json!({
+        "rpc_url":rpc_url,"chain_id":31337,"token":format!("0x{}","1".repeat(40)),
+        "escrow":format!("0x{}","2".repeat(40)),"escrow_code_sha256":"a".repeat(64),
+        "microusdc_per_item":1,"confirmations":1,
+        "wallets":{"buyer":format!("0x{}","3".repeat(40)),"worker":format!("0x{}","4".repeat(40))}
+    }))
+    .unwrap();
+    let state = app(std::path::Path::new(":memory:"));
+    let job = {
+        let mut store = state.store.lock().unwrap();
+        store.payments = Some(config.clone());
+        store.submit(&principal("buyer", &["submitter"]),
+            serde_json::from_value(json!({"idempotency_key":"rpc-disclosure","mode":{"kind":"paid_usdc","operator":"worker","max_cost_microusdc":10},"workload":{"kind":"sha256","texts":["x"]}})).unwrap(),soapbox::model::now()).unwrap()
+    };
+    let failure = config
+        .observe(job.payment.as_ref().unwrap())
+        .await
+        .err()
+        .unwrap();
+    let details = format!("{failure:#}");
+    assert!(!details.contains("private-provider-key"));
+    assert!(!details.contains("private-query-key"));
+    let response = api::router(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/jobs/{}/payment", job.id))
+                .header("authorization", format!("Bearer {BUYER}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 503);
+    let body = String::from_utf8(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(body.contains("payment verification unavailable; reference="));
+    for secret in [
+        "private-provider-key",
+        "private-query-key",
+        "upstream-private-response",
+        &rpc_url,
+    ] {
+        assert!(!body.contains(secret));
+    }
+    rpc.abort();
+}

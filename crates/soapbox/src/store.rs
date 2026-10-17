@@ -1,5 +1,6 @@
 use crate::{config::Principal, model::*};
-use anyhow::{ensure, Result};
+use crate::{ensure_public as ensure, error::UserFacing};
+use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -33,7 +34,7 @@ impl Store {
             CREATE INDEX IF NOT EXISTS artifacts_owner ON artifacts(owner);
         ")?;
         let version: i64 = db.query_row("SELECT version FROM meta", [], |r| r.get(0))?;
-        ensure!(version == 1, "unsupported database schema");
+        anyhow::ensure!(version == 1, "unsupported database schema");
         Ok(Self {
             payments: None,
             db,
@@ -116,7 +117,9 @@ impl Store {
     }
     pub fn submit(&mut self, p: &Principal, spec: Submit, at: i64) -> Result<Job> {
         ensure!(p.has("submitter"), "submitter role required");
-        ensure!(p.permits(&spec.mode), "pool/project membership required");
+        if !p.permits(&spec.mode) {
+            return Err(UserFacing::forbidden("pool/project membership required").into());
+        }
         spec.validate()?;
         ensure!(
             !spec.idempotency_key.is_empty() && spec.idempotency_key.len() <= 128,
@@ -215,7 +218,7 @@ impl Store {
                 let cfg = self
                     .payments
                     .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("USDC settlement is disabled"))?;
+                    .ok_or_else(|| UserFacing::bad_request("USDC settlement is disabled"))?;
                 job.payment = Some(cfg.quote(
                     &job.id,
                     &job.owner,
@@ -439,7 +442,9 @@ impl Store {
     pub fn cancel(&mut self, p: &Principal, id: &str, at: i64) -> Result<Job> {
         let tx = self.db.transaction()?;
         let mut job = get(&tx, id)?;
-        ensure!(p.id == job.owner || p.has("admin"), "job not accessible");
+        if p.id != job.owner && !p.has("admin") {
+            return Err(UserFacing::forbidden("job not accessible").into());
+        }
         if ["queued", "running", "awaiting_payment"].contains(&job.status.as_str()) {
             job.status = "cancelled".into();
             refund(&tx, &mut job, at)?;
@@ -499,7 +504,8 @@ impl Store {
     pub fn artifact_get(&self, p: &Principal, id: &str, at: i64) -> Result<Value> {
         let row:Option<(String,String,i64)>=self.db.query_row("SELECT content,digest,expires_at FROM artifacts WHERE id=?1 AND owner=?2 AND expires_at>?3",
             params![id,p.id,at],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
-        let (content, hash, expires) = row.ok_or_else(|| anyhow::anyhow!("artifact not found"))?;
+        let (content, hash, expires) =
+            row.ok_or_else(|| UserFacing::not_found("artifact not found"))?;
         Ok(json!({"id":id,"content":content,"sha256":hash,"expires_at":expires}))
     }
 }
@@ -528,7 +534,7 @@ fn get(db: &Connection, id: &str) -> Result<Job> {
         .query_row("SELECT data FROM jobs WHERE id=?1", [id], |r| r.get(0))
         .optional()?;
     Ok(serde_json::from_str(
-        &data.ok_or_else(|| anyhow::anyhow!("job not found"))?,
+        &data.ok_or_else(|| UserFacing::not_found("job not found"))?,
     )?)
 }
 pub(crate) fn save(tx: &Transaction<'_>, job: &Job) -> Result<()> {

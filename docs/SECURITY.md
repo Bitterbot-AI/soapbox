@@ -22,6 +22,14 @@ Bearer tokens authorize provisioned roles and memberships, not hardware attestat
 - Lease tokens are unique per attempt; expired or cancelled attempts cannot earn credits.
 - Current receipts are unsigned coordinator records; embedding acceptance checks shape only.
 
+## RPC credentials and error responses
+
+The coordinator may use its own keyed RPC endpoint, but participant enrollment
+exports only the public Base Sepolia endpoint. Keyed/custom endpoints in incoming
+participant enrollment are rejected. Request errors and payment observation
+failures must never expose transport URLs, response bodies or private data.
+Unknown errors are correlated using a random reference and a fixed category.
+
 ## What is not provided
 
 Public marketplace security, confidential computing, malicious-host resistance, Sybil

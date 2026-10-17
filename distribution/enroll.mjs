@@ -4,7 +4,7 @@ import { access, open, unlink } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { readJson, privateJson, connection } from "./common.mjs";
+import { readJson, privateJson, connection, PUBLIC_SEPOLIA_RPC } from "./common.mjs";
 
 export async function enroll({ state, role, id, address, url, output, pools = [], projects = [] }) {
   assert.ok(!["buyer", "worker"].includes(id), "Choose a unique participant ID");
@@ -41,7 +41,8 @@ export async function enroll({ state, role, id, address, url, output, pools = []
       chain_id: config.payments.chain_id,
       escrow: config.payments.escrow,
       escrow_code_sha256: config.payments.escrow_code_sha256,
-      rpc_url: config.payments.rpc_url,
+      // Coordinator RPC configuration is private and must never be exported.
+      rpc_url: PUBLIC_SEPOLIA_RPC,
     });
     // Export first: failure to persist admissions leaves an inert credential, never an undisclosed active one.
     await privateJson(output, c);

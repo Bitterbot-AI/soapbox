@@ -140,6 +140,45 @@ async fn real_worker_processes_execute_all_modes_and_store_artifacts() {
         .unwrap();
     assert_eq!(snapshot["account"]["available_credits"], 8);
     assert_eq!(snapshot["nodes"].as_array().unwrap().len(), 2);
+    let operator = ApiClient::new(&address, WORKER2.into()).unwrap();
+    let own: Vec<Value> = operator
+        .request(reqwest::Method::GET, "/v1/jobs", None)
+        .await
+        .unwrap();
+    assert_eq!(own.len(), 1);
+    assert_eq!(own[0]["worker"], "worker2");
+    let other = snapshot["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["worker"] == "worker")
+        .unwrap();
+    assert!(operator
+        .request::<Value>(
+            reqwest::Method::GET,
+            &format!("/v1/jobs/{}", other["id"].as_str().unwrap()),
+            None
+        )
+        .await
+        .is_err());
+    let own_id = own[0]["id"].as_str().unwrap();
+    assert!(operator
+        .request::<Value>(reqwest::Method::GET, &format!("/v1/jobs/{own_id}"), None)
+        .await
+        .is_ok());
+    assert!(operator
+        .post::<Value>("/v1/workers/worker/pause", json!({"paused":true}))
+        .await
+        .is_err());
+    assert!(operator
+        .post::<Value>("/v1/workers/worker2/pause", json!({"paused":true}))
+        .await
+        .is_ok());
+    assert!(operator
+        .request::<Value>(reqwest::Method::GET, "/v1/settlements", None)
+        .await
+        .is_err());
+
     let stored: Value = client
         .post(
             "/v1/artifacts",

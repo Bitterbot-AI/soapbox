@@ -125,8 +125,8 @@ async fn status(
 ) -> ApiResult<Json<Value>> {
     app.with(|s| {
         s.sweep(now())?;
-        Ok(Json(json!({"api_version":API_VERSION,"release":"0.2.0","settlement":if s.payments.is_some() { "usdc_escrow" } else { "test_credits" },
-            "principal":{"id":p.id,"roles":p.roles,"pools":p.pools,"projects":p.projects},"account":s.balance(&p.id)?,"nodes":s.nodes(&p,now())?,"jobs":s.jobs(&p)?,
+        Ok(Json(json!({"api_version":API_VERSION,"release":env!("CARGO_PKG_VERSION"),"settlement":if s.payments.is_some() { "usdc_escrow" } else { "test_credits" },
+            "principal":{"id":p.id,"roles":p.roles,"pools":p.pools,"projects":p.projects},"payment_account":s.payments.as_ref().map(|cfg| json!({"chain_id":cfg.chain_id,"address":cfg.wallets.get(&p.id)})),"account":s.balance(&p.id)?,"nodes":s.nodes(&p,now())?,"jobs":s.jobs(&p)?,
             "capabilities":{"cpu_sha256":true,"embeddings":"pinned_ollama_batches","gpu_evidence":"worker_reported_full_residency","durable_storage":false,
                 "temporary_artifacts":true,"public_marketplace":false,"mesh_discovery":false}})))
     })
@@ -152,7 +152,7 @@ async fn job(
 ) -> ApiResult<Json<Job>> {
     app.with(|s| {
         let job = s.job(&id)?;
-        anyhow::ensure!(job.owner == p.id || p.has("admin"), "job not accessible");
+        anyhow::ensure!(p.can_read_job(&job), "job not accessible");
         Ok(Json(job))
     })
 }

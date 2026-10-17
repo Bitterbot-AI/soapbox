@@ -263,13 +263,33 @@ async fn execute(job: &Job, config: &WorkerConfig) -> Result<Value> {
 }
 pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<()> {
     let mut cached_probe: Option<(std::time::Instant, crate::gpu::Runtime)> = None;
+    let mut previous_offer: Option<Offer> = None;
     loop {
         // Fresh RAM/GPU admission on every heartbeat; expensive isolated model probes at most once per minute.
         let cached = cached_probe
             .as_ref()
             .filter(|(at, _)| at.elapsed() < Duration::from_secs(60))
-            .map(|(_, runtime)| runtime);
-        let offer = inventory_cached(&config, cached).await?;
+            .map(|(_, runtime)| runtime.clone());
+        let probe = inventory_cached(&config, cached.as_ref());
+        tokio::pin!(probe);
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(8));
+        heartbeat.tick().await;
+        let offer = loop {
+            tokio::select! {
+                result = &mut probe => break result?,
+                _ = heartbeat.tick() => {
+                    if let Some(mut pending) = previous_offer.clone() {
+                        // Remain visible while probing, but do not advertise admission readiness.
+                        pending.paused = true;
+                        pending.gpu_observed = false;
+                        pending.gpu_unavailable_reason = Some("Refreshing GPU readiness".into());
+                        client.post::<Value>("/v1/workers/register", &pending).await?;
+                    }
+                },
+                _ = tokio::signal::ctrl_c() => return Ok(()),
+            }
+        };
+        previous_offer = Some(offer.clone());
         if config.sandbox.is_some() && cached.is_none() {
             cached_probe = offer
                 .runtime

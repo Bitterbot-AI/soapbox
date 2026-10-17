@@ -15,7 +15,15 @@ pub struct Gpu {
     pub temperature_c: u32,
 }
 pub async fn inventory() -> Result<Vec<Gpu>> {
-    let mut command = tokio::process::Command::new("nvidia-smi");
+    // Desktop services do not inherit WSL login-shell PATH additions.
+    let executable = if cfg!(target_os = "linux")
+        && std::path::Path::new("/usr/lib/wsl/lib/nvidia-smi").is_file()
+    {
+        "/usr/lib/wsl/lib/nvidia-smi"
+    } else {
+        "nvidia-smi"
+    };
+    let mut command = tokio::process::Command::new(executable);
     command.args(["--query-gpu=name,uuid,driver_version,memory.total,memory.free,utilization.gpu,temperature.gpu", "--format=csv,noheader,nounits"]);
     command.kill_on_drop(true);
     #[cfg(windows)]

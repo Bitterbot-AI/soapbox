@@ -47,8 +47,10 @@ impl Store {
     pub fn jobs(&self, p: &Principal) -> Result<Vec<Job>> {
         let mut stmt = self
             .db
-            .prepare("SELECT data FROM jobs WHERE owner=?1 OR ?2 ORDER BY rowid DESC LIMIT 100")?;
-        let rows = stmt.query_map(params![p.id, p.has("admin")], |r| r.get::<_, String>(0))?;
+            .prepare("SELECT data FROM jobs WHERE owner=?1 OR ?2 OR (?3 AND json_extract(data,'$.worker')=?1) ORDER BY rowid DESC LIMIT 100")?;
+        let rows = stmt.query_map(params![p.id, p.has("admin"), p.has("worker")], |r| {
+            r.get::<_, String>(0)
+        })?;
         rows.map(|r| {
             let mut job: Job = serde_json::from_str(&r?)?;
             job.result = None;

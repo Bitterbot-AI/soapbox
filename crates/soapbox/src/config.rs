@@ -15,6 +15,11 @@ pub struct Principal {
     pub projects: Vec<String>,
 }
 impl Principal {
+    pub fn can_read_job(&self, job: &crate::model::Job) -> bool {
+        job.owner == self.id
+            || self.has("admin")
+            || (self.has("worker") && job.worker.as_ref() == Some(&self.id))
+    }
     pub fn has(&self, role: &str) -> bool {
         self.roles.iter().any(|r| r == role)
     }

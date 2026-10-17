@@ -7,3 +7,8 @@
 
 node_modules/
 settlement/build/
+
+/dist/
+/release/
+*.log
+rustc-ice-*.txt

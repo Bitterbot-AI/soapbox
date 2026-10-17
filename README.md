@@ -3,7 +3,7 @@
 Opt-in compute pools for **paid, private, and collective workloads**, implemented in Rust.
 Bitterbot is the first client; the protocol and worker can run independently.
 
-**Release 0.2 is a trusted pilot, not a public cloud marketplace.** Paid jobs support
+**Release 0.3.0-rc.1 is a trusted pilot, not a public cloud marketplace.** Paid jobs support
 Base Sepolia USDC escrow with fixed operator payouts and confirmed settlement. Mainnet is disabled.
 The original non-redeemable TEST_CREDIT mode remains available for development.
 Storage is an account-scoped temporary artifact service on one coordinator.
@@ -99,3 +99,7 @@ Run the complete demo from PowerShell:
 Add -Keep to leave the demo running for the Bitterbot UI. The script restores your prior
 SOAPBOX_BINARY setting on exit. This executable is an unsigned debug build; the source
 and build instructions are the portable deliverable.
+
+## Installable private test release
+
+See [release validation](docs/RELEASE-VALIDATION.md) and [buyer and operator setup](docs/TEST-RELEASE.md) for the Ubuntu 24.04 / WSL2 x64 package compatible with Bitterbot 1.8.0.

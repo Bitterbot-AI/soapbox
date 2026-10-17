@@ -1,14 +1,14 @@
 # Soapbox v0.3.0-rc.2 installer validation
 
-Validated on 2026-10-17. This is an unsigned private Base Sepolia test release.
+Validated on 2026-10-17. This unsigned Base Sepolia candidate remains an unpublished draft, superseded by [rc3](RC3-INSTALLER-VALIDATION.md).
 
 ## Scope and provenance
 
-The tested and published archives were built from Soapbox commit
+The tested candidate archives were built from Soapbox commit
 `befa187380969d0dcfe711676fbd8d8b4633cd48` and Bitterbot desktop commit
 `7d08b9fd242d2bb19fa499b55bfa049c595bdc82`. The later desktop documentation
 commit `0c9485fdce2ab73aa33d6d7f7c2461a4eed54d22` is included in the integration
-source snapshot. No executable code changed between packaging and publication.
+source snapshot. No executable code changed after packaging this candidate.
 
 The bundled GPU runtime remains the previously approved v0.3.0-rc.1 archive,
 verified by its fixed SHA-256 digest. Installer and wizard changes are rc.2.

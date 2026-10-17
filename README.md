@@ -107,4 +107,4 @@ and build instructions are the portable deliverable.
 
 ## Installable private test release
 
-See [release validation](docs/RELEASE-VALIDATION.md) and [buyer and operator setup](docs/TEST-RELEASE.md) for the Ubuntu 24.04 / WSL2 x64 package compatible with Bitterbot 1.8.0.
+See [release validation](docs/RC3-INSTALLER-VALIDATION.md) and [buyer and operator setup](docs/TEST-RELEASE.md) for the Ubuntu 24.04 / WSL2 x64 package compatible with Bitterbot 1.8.0.

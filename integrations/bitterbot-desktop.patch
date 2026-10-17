@@ -86,10 +86,10 @@ index 0000000..c1cf1d2
 +}
 diff --git a/desktop/renderer/src/components/compute/ComputeSetup.test.tsx b/desktop/renderer/src/components/compute/ComputeSetup.test.tsx
 new file mode 100644
-index 0000000..ee67c6e
+index 0000000..8b4465b
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/ComputeSetup.test.tsx
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,99 @@
 +import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 +import { afterEach, beforeEach, expect, it, vi } from "vitest";
 +import type { SoapboxSetupStatus } from "../../../../../src/infra/soapbox-setup-types";
@@ -181,12 +181,20 @@ index 0000000..ee67c6e
 +  expect(screen.queryByLabelText("Enrollment file")).toBeNull();
 +  expect(screen.getByText(/tester’s own Bitterbot app/)).toBeTruthy();
 +});
++
++it("clears a transient status error after the gateway reconnects", async () => {
++  fake.request.mockRejectedValueOnce(new Error("Gateway restarting"));
++  render(<ComputeSetup onClose={() => {}} />);
++  await screen.findByRole("alert");
++  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull(), { timeout: 4000 });
++  expect(screen.getByRole("button", { name: "Create test wallet" })).toBeTruthy();
++});
 diff --git a/desktop/renderer/src/components/compute/ComputeSetup.tsx b/desktop/renderer/src/components/compute/ComputeSetup.tsx
 new file mode 100644
-index 0000000..6f60984
+index 0000000..81c99a3
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/ComputeSetup.tsx
-@@ -0,0 +1,388 @@
+@@ -0,0 +1,390 @@
 +import { useCallback, useEffect, useState } from "react";
 +import type { SoapboxSetupStatus } from "../../../../../src/infra/soapbox-setup-types";
 +import { useGatewayStore } from "../../stores/gateway-store";
@@ -204,6 +212,7 @@ index 0000000..6f60984
 +  const [customCredentials, setCustomCredentials] = useState(false);
 +  const [busy, setBusy] = useState(false);
 +  const [error, setError] = useState("");
++  const [connectionError, setConnectionError] = useState("");
 +  const [upload, setUpload] = useState<number>();
 +  const [activating, setActivating] = useState(false);
 +  const [acknowledged, setAcknowledged] = useState(false);
@@ -221,10 +230,11 @@ index 0000000..6f60984
 +        const next = await request<SoapboxSetupStatus>("soapbox.setup.status");
 +        if (!disposed) {
 +          setStatus(next);
++          setConnectionError("");
 +          if (next.enrollment) setRole(next.enrollment.role);
 +        }
 +      } catch (e) {
-+        if (!disposed && !activating) setError(String(e));
++        if (!disposed && !activating) setConnectionError(String(e));
 +      } finally {
 +        if (!disposed) timer = setTimeout(() => void poll(), 2000);
 +      }
@@ -293,9 +303,9 @@ index 0000000..6f60984
 +        Base Sepolia test network. Compute uses a separate wallet and spending history. Your main
 +        wallet stays on its current network.
 +      </p>
-+      {error && (
++      {(error || connectionError) && (
 +        <p role="alert" className="text-sm text-danger">
-+          {error}
++          {error || connectionError}
 +        </p>
 +      )}
 +      {!status && <p role="status">Loading setup…</p>}
@@ -1580,10 +1590,10 @@ index 3292083..2a6c930 100644
    { id: "p2p", label: "P2P Network", icon: Globe, group: "advanced" },
 diff --git a/docs/network/soapbox-gui-validation.json b/docs/network/soapbox-gui-validation.json
 new file mode 100644
-index 0000000..97c2945
+index 0000000..b2b899f
 --- /dev/null
 +++ b/docs/network/soapbox-gui-validation.json
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,198 @@
 +{
 +  "version": "0.3.0-rc.1",
 +  "topology": "two desktop gateway profiles on one physical host",
@@ -1752,7 +1762,35 @@ index 0000000..97c2945
 +  "unassigned_job_access_rejected": true,
 +  "repeat_payment_refresh_no_duplicate_payout": true,
 +  "main_wallet_configuration_and_identity_unchanged": true,
-+  "completed_at": "2026-10-17T17:58:09.422Z"
++  "completed_at": "2026-10-17T17:58:09.422Z",
++  "desktop_onboarding": {
++    "buyer": {
++      "id": "gui-buyer",
++      "chain_id": 84532,
++      "wallet_address": "0x6206c0743e09D07e2F29673f23A2cBD0F86e0795",
++      "wallet_created_via_ui": true,
++      "enrollment_import_verified_via_rpc": true,
++      "activation_via_ui": true,
++      "reconnected_to_buyer_dashboard": true,
++      "paid_gpu_submission_form_enabled": true,
++      "coordinator_roles": ["submitter"],
++      "temporary_enrollment_revoked": true,
++      "revoked_token_rejected": true
++    },
++    "operator": {
++      "id": "release-operator",
++      "enrollment_import_via_ui": true,
++      "runtime_upload_via_ui": true,
++      "gpu_preparation_passed": true,
++      "activation_via_ui": true,
++      "paid_job_id": "0c3a70ce-bc8f-4f91-8f99-a07b44bb237e"
++    },
++    "focused_tests_passed": 32,
++    "typecheck_passed": true,
++    "checked_at": "2026-10-17T18:20:15.449Z",
++    "main_gpu_worker_restored": true,
++    "cleanup_verified_at": "2026-10-17T18:22:44.108Z"
++  }
 +}
 diff --git a/docs/network/soapbox-main-app-validation.json b/docs/network/soapbox-main-app-validation.json
 new file mode 100644
@@ -2015,10 +2053,10 @@ index 0000000..ff5f287
 +}
 diff --git a/docs/network/soapbox.md b/docs/network/soapbox.md
 new file mode 100644
-index 0000000..eb71c3f
+index 0000000..2c58b01
 --- /dev/null
 +++ b/docs/network/soapbox.md
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,257 @@
 +---
 +summary: "Connect Bitterbot to the standalone Soapbox trusted compute pilot"
 +read_when:
@@ -2269,6 +2307,13 @@ index 0000000..eb71c3f
 +ordered chunks; token/signing secrets are absent from status responses and child-process output.
 +On gateway shutdown, preparation is interrupted and its model-download container is removed.
 +The independent two-machine test remains a separate acceptance step when a tester is available.
++
++GUI validation used separate gateway profiles on one RTX 4080 host: buyer wallet creation and
++activation, operator enrollment/upload/activation, and a paid isolated GPU job that transferred
++0.002 Base Sepolia USDC to the operator. The buyer-only test enrollment was revoked afterward.
++The evidence is in `soapbox-gui-validation.json`; 32 focused tests and the workspace TypeScript
++check also passed. The immutable v0.3.0-rc.1 runtime archive predates this setup UI, so testers
++need a desktop build containing the updated integration snapshot from the private Soapbox repo.
 diff --git a/extensions/soapbox-compute/bitterbot.plugin.json b/extensions/soapbox-compute/bitterbot.plugin.json
 new file mode 100644
 index 0000000..70eba2a

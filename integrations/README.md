@@ -6,7 +6,7 @@ Build the desktop overlay against the exact installed release source with `node 
 
 ## Desktop setup preview
 
-The integration snapshot at desktop commit `01835d220ab450712cfc0982ae2c07b4103b53a7` adds **Compute → Set up buyer or operator**. Buyers can create a separate Base Sepolia wallet and import enrollment. Operators can import enrollment, upload the checksum-pinned runtime from the published release, prepare the GPU and activate with a resource allowance. All setup endpoints require an authenticated gateway admin. Mainnet wallet settings are preserved.
+The integration snapshot at desktop commit `8310273f57e953c0725251af33a7f5f5768913b2` adds **Compute → Set up buyer or operator**. Buyers can create a separate Base Sepolia wallet and import enrollment. Operators can import enrollment, upload the checksum-pinned runtime from the published release, prepare the GPU and activate with a resource allowance. All setup endpoints require an authenticated gateway admin. Mainnet wallet settings are preserved.
 
 A fresh-profile RTX 4080 operator completed job `0c3a70ce-bc8f-4f91-8f99-a07b44bb237e` and received 0.002 test USDC after setup. Two 384-dimensional vectors, wallet separation and duplicate-settlement prevention were verified on two gateway profiles on one physical host. Physical two-machine validation is still pending. See the desktop patch’s `docs/network/soapbox.md` for the GUI guide and `soapbox-gui-validation.json` for evidence.
 

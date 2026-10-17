@@ -1,0 +1,1 @@
+{"name":"@bitterbot/soapbox-settlement","private":true,"type":"module","scripts":{"test":"node --test escrow.test.mjs","compile":"node compile.mjs"},"dependencies":{"viem":"2.38.5"},"devDependencies":{"solc":"0.8.30","ganache":"7.9.2"}}

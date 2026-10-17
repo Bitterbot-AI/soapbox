@@ -23,7 +23,8 @@ pub struct App {
     pub identities: Arc<Vec<(String, Principal)>>,
 }
 impl App {
-    pub fn new(store: Store, config: Config) -> Result<Self> {
+    pub fn new(mut store: Store, config: Config) -> Result<Self> {
+        store.payments = config.payments.clone();
         let identities = config
             .principals
             .into_iter()
@@ -37,7 +38,7 @@ impl App {
             identities: Arc::new(identities),
         })
     }
-    fn with<T>(&self, f: impl FnOnce(&mut Store) -> Result<T>) -> ApiResult<T> {
+    pub(crate) fn with<T>(&self, f: impl FnOnce(&mut Store) -> Result<T>) -> ApiResult<T> {
         let mut store = self.store.lock().map_err(|_| {
             ApiError(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -100,6 +101,8 @@ fn role(p: &Principal, role: &str) -> ApiResult<()> {
 pub fn router(app: App) -> Router {
     Router::new()
         .route("/v1/status", get(status))
+        .route("/v1/settlements", get(crate::payment::intents))
+        .route("/v1/jobs/{id}/payment", post(crate::payment::refresh))
         .route("/v1/jobs", get(jobs).post(submit))
         .route("/v1/jobs/{id}", get(job))
         .route("/v1/jobs/{id}/cancel", post(cancel))
@@ -122,7 +125,7 @@ async fn status(
 ) -> ApiResult<Json<Value>> {
     app.with(|s| {
         s.sweep(now())?;
-        Ok(Json(json!({"api_version":API_VERSION,"release":"0.2.0","settlement":"test_credits",
+        Ok(Json(json!({"api_version":API_VERSION,"release":"0.2.0","settlement":if s.payments.is_some() { "usdc_escrow" } else { "test_credits" },
             "principal":{"id":p.id,"roles":p.roles,"pools":p.pools,"projects":p.projects},"account":s.balance(&p.id)?,"nodes":s.nodes(&p,now())?,"jobs":s.jobs(&p)?,
             "capabilities":{"cpu_sha256":true,"embeddings":"pinned_ollama_batches","gpu_evidence":"worker_reported_full_residency","durable_storage":false,
                 "temporary_artifacts":true,"public_marketplace":false,"mesh_discovery":false}})))

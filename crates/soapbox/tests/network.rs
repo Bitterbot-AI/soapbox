@@ -113,7 +113,7 @@ async fn real_worker_processes_execute_all_modes_and_store_artifacts() {
         ids.push(j["id"].as_str().unwrap().to_string());
     }
     let config = dir.path().join("worker.json");
-    std::fs::write(&config,json!({"modes":["paid","private","collective"],"pools":["circle"],"projects":["science"],"memory_mib":256}).to_string()).unwrap();
+    std::fs::write(&config,json!({"allow_unsafe_host":true,"modes":["paid","private","collective"],"pools":["circle"],"projects":["science"],"memory_mib":256}).to_string()).unwrap();
     for token in [WORKER, WORKER2, WORKER] {
         let status = tokio::process::Command::new(env!("CARGO_BIN_EXE_soapbox"))
             .args(["worker", "--config"])

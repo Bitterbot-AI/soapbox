@@ -11,7 +11,7 @@ use std::{net::SocketAddr, path::PathBuf};
 #[derive(Parser)]
 #[command(
     version,
-    about = "Opt-in compute pools. v0.2 uses non-redeemable test credits."
+    about = "Opt-in isolated compute pools with test credits or Base Sepolia USDC escrow."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -19,6 +19,8 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    #[command(hide = true)]
+    SandboxRun,
     Inspect {
         #[arg(long)]
         config: PathBuf,
@@ -59,6 +61,7 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command {
+        Command::SandboxRun => soapbox::sandbox::runner().await?,
         Command::Inspect { config } => {
             let config = WorkerConfig::read(&config)?;
             println!(
@@ -85,6 +88,11 @@ async fn main() -> Result<()> {
                 config.collective_daily_items,
                 config.artifact_quota_bytes,
             )?;
+            let settlement = if config.payments.is_some() {
+                "USDC_ESCROW"
+            } else {
+                "TEST_CREDIT"
+            };
             let app = App::new(store, config)?;
             let sweep = app.store.clone();
             let sweeper = tokio::spawn(async move {
@@ -99,7 +107,7 @@ async fn main() -> Result<()> {
             });
             let listener = tokio::net::TcpListener::bind(bind).await?;
             eprintln!(
-                "soapbox API v1 listening on {}; settlement=TEST_CREDIT",
+                "soapbox API v1 listening on {}; settlement={settlement}",
                 listener.local_addr()?
             );
             axum::serve(listener, api::router(app))

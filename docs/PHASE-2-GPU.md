@@ -1,5 +1,7 @@
 # Phase 2 GPU execution
 
+> Current isolation and USDC extension: [Phase 2 isolation and payments](PHASE-2-ISOLATION-PAYMENTS.md). Earlier TEST_CREDIT/shared-host descriptions below refer to the original pilot.
+
 Implemented and physically tested on 2026-10-16. This is the GPU service increment of
 Phase 2; the paid customer/production exit gate in MVP-PLAN.md remains open.
 

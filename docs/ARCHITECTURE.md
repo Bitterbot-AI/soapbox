@@ -1,5 +1,7 @@
 # Architecture
 
+> Current isolation and USDC extension: [Phase 2 isolation and payments](PHASE-2-ISOLATION-PAYMENTS.md). Earlier TEST_CREDIT/shared-host descriptions below refer to the original pilot.
+
 Status: v0.1 implementation and staged production design, 2026-10-16.
 
 ## Product boundary

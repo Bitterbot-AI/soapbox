@@ -43,7 +43,10 @@ jobs now execute through Bitterbot WebSocket RPC in paid/private/collective mode
 Pinned models, automatic warmup, NVIDIA admission checks, ordered bounded batching,
 runtime measurements, desktop selection and live result refresh are implemented.
 See [PHASE-2-GPU.md](PHASE-2-GPU.md). The broader paid-customer exit gate below is
-not complete: billing remains TEST_CREDIT and hard isolation/settlement remain open.
+extended by the [isolation and USDC increment](PHASE-2-ISOLATION-PAYMENTS.md):
+per-job Linux containers, enforced CPU/RAM/zero-swap limits, Base Sepolia escrow,
+fixed-payee settlement and refund reconciliation are now implemented. The broader
+commercial exit gate still requires an independent review, SLA and customer qualification.
 
 Dependencies: one buyer workload contract; designated supported GPUs/OSes; partner demand.
 Suggested scope: a small opt-in fleet with bounded batch jobs, not all existing mesh nodes.

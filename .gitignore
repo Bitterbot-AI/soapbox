@@ -4,3 +4,6 @@
 /config.local.json
 *.sqlite*
 .env
+
+node_modules/
+settlement/build/

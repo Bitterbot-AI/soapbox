@@ -1,5 +1,7 @@
 # Phase 2 GPU validation
 
+> Current isolation and USDC extension: [Phase 2 isolation and payments](PHASE-2-ISOLATION-PAYMENTS.md). Earlier TEST_CREDIT/shared-host descriptions below refer to the original pilot.
+
 Date: 2026-10-16. Soapbox 0.2.0, native Windows x64 development binary.
 This record supplements the historical Phase 1 record in VALIDATION.md.
 

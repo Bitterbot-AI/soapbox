@@ -1,5 +1,7 @@
 # API v1
 
+> Current isolation and USDC extension: [Phase 2 isolation and payments](PHASE-2-ISOLATION-PAYMENTS.md). Earlier TEST_CREDIT/shared-host descriptions below refer to the original pilot.
+
 All routes require Authorization: Bearer <credential>. The JSON API has no CORS browser
 interface. Bind to loopback or put the service behind a TLS reverse proxy on a trusted network.
 Errors are JSON { "error": "..." } except malformed extractor/body errors from the HTTP framework.

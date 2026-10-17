@@ -6,3 +6,6 @@ pub mod worker;
 
 pub mod gpu;
 pub mod ollama;
+
+pub mod payment;
+pub mod sandbox;

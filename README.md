@@ -3,8 +3,9 @@
 Opt-in compute pools for **paid, private, and collective workloads**, implemented in Rust.
 Bitterbot is the first client; the protocol and worker can run independently.
 
-**Release 0.2 is a trusted pilot, not a public cloud marketplace.** Paid jobs use
-non-redeemable TEST_CREDIT balances. There is no cash, USDC, token issuance, or withdrawal.
+**Release 0.2 is a trusted pilot, not a public cloud marketplace.** Paid jobs support
+Base Sepolia USDC escrow with fixed operator payouts and confirmed settlement. Mainnet is disabled.
+The original non-redeemable TEST_CREDIT mode remains available for development.
 Storage is an account-scoped temporary artifact service on one coordinator.
 
 ## What runs today
@@ -21,9 +22,12 @@ Storage is an account-scoped temporary artifact service on one coordinator.
 
 GPU residency is observed from Ollama, not attested. Embeddings are checked for shape,
 not semantic correctness. Workers are explicitly admitted and trusted in this release.
-CPU/RAM declarations are admission budgets, not OS-enforced isolation.
+The isolated Linux/WSL worker enforces CPU, RAM, zero-swap and process limits. Legacy host
+execution is an explicit development option and cannot accept USDC jobs.
 
-See [Phase 2 GPU setup and architecture](docs/PHASE-2-GPU.md) and
+Start with [Phase 2 isolation and USDC setup](docs/PHASE-2-ISOLATION-PAYMENTS.md).
+
+The earlier host-runtime increment is documented in [Phase 2 GPU setup and architecture](docs/PHASE-2-GPU.md) and
 [physical GPU validation](docs/PHASE-2-VALIDATION.md).
 On this machine, run scripts/soapbox-gpu-pilot.ps1 from the sibling bitterbot-desktop
 repository for the complete interactive pilot, or add -TestOnly for automated verification.

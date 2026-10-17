@@ -10,12 +10,13 @@
   "projects": [
     "research-demo"
   ],
-  "memory_mib": 256,
+  "memory_mib": 2048,
   "ollama_model": "all-minilm:latest",
   "ollama_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef",
   "max_gpu_temperature_c": 80,
   "max_gpu_utilization_pct": 40,
   "min_gpu_free_mib": 256,
   "pause_file": "data/PAUSE",
-  "min_price_credits": 1
+  "min_price_credits": 1,
+  "allow_unsafe_host": true
 }

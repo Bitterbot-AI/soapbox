@@ -93,6 +93,10 @@ impl ApiClient {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerConfig {
+    #[serde(default)]
+    pub sandbox: Option<crate::sandbox::SandboxConfig>,
+    #[serde(default)]
+    pub allow_unsafe_host: bool,
     pub modes: Vec<String>,
     #[serde(default)]
     pub pools: Vec<String>,
@@ -148,6 +152,13 @@ impl WorkerConfig {
     }
     pub fn read(path: &std::path::Path) -> Result<Self> {
         let config: Self = serde_json::from_slice(&std::fs::read(path)?)?;
+        if let Some(sandbox) = &config.sandbox {
+            sandbox.validate()?;
+        }
+        ensure!(
+            config.sandbox.is_some() || config.allow_unsafe_host,
+            "sandbox required; allow_unsafe_host is for development only"
+        );
         ensure!(
             config.memory_mib >= 256,
             "worker memory allowance must be at least 256 MiB"
@@ -179,12 +190,19 @@ impl WorkerConfig {
     }
 }
 pub async fn inventory(config: &WorkerConfig) -> Result<Offer> {
+    inventory_cached(config, None).await
+}
+async fn inventory_cached(
+    config: &WorkerConfig,
+    cached: Option<&crate::gpu::Runtime>,
+) -> Result<Offer> {
     let mut system = sysinfo::System::new();
     system.refresh_memory();
     let available = system.available_memory() / 1024 / 1024;
     let paused =
         available < config.memory_mib || config.pause_file.as_ref().is_some_and(|p| p.exists());
     let mut offer = Offer {
+        isolation: config.sandbox.as_ref().map(|_| "docker_v1".to_string()),
         cpu_threads: 1,
         memory_mib: config.memory_mib.min(available).max(64),
         gpu_observed: false,
@@ -202,7 +220,13 @@ pub async fn inventory(config: &WorkerConfig) -> Result<Offer> {
         offer.hardware = crate::gpu::inventory().await.unwrap_or_default();
         let readiness = async {
             config.check_gpu_policy(&offer.hardware)?;
-            let runtime = crate::ollama::ready(crate::ollama::LOCAL_BACKEND, config).await?;
+            let runtime: crate::gpu::Runtime = if let Some(runtime) = cached {
+                runtime.clone()
+            } else if config.sandbox.is_some() {
+                serde_json::from_value(crate::sandbox::execute(None, config).await?)?
+            } else {
+                crate::ollama::ready(crate::ollama::LOCAL_BACKEND, config).await?
+            };
             ensure!(runtime.fully_gpu(), "model is not fully GPU resident");
             Ok::<_, anyhow::Error>(runtime)
         };
@@ -221,6 +245,13 @@ pub async fn inventory(config: &WorkerConfig) -> Result<Offer> {
     Ok(offer)
 }
 async fn execute(job: &Job, config: &WorkerConfig) -> Result<Value> {
+    if config.sandbox.is_some() {
+        return crate::sandbox::execute(Some(job), config).await;
+    }
+    ensure!(
+        config.allow_unsafe_host && job.payment.is_none(),
+        "USDC jobs require isolation"
+    );
     if let Some(result) = job.spec.workload.cpu_result() {
         return Ok(result);
     }
@@ -231,8 +262,20 @@ async fn execute(job: &Job, config: &WorkerConfig) -> Result<Value> {
     .await?
 }
 pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<()> {
+    let mut cached_probe: Option<(std::time::Instant, crate::gpu::Runtime)> = None;
     loop {
-        let offer = inventory(&config).await?;
+        // Fresh RAM/GPU admission on every heartbeat; expensive isolated model probes at most once per minute.
+        let cached = cached_probe
+            .as_ref()
+            .filter(|(at, _)| at.elapsed() < Duration::from_secs(60))
+            .map(|(_, runtime)| runtime);
+        let offer = inventory_cached(&config, cached).await?;
+        if config.sandbox.is_some() && cached.is_none() {
+            cached_probe = offer
+                .runtime
+                .clone()
+                .map(|runtime| (std::time::Instant::now(), runtime));
+        }
         client.post::<Value>("/v1/workers/register", &offer).await?;
         if let Some(job) = client
             .post::<Option<Job>>("/v1/workers/claim", json!({}))
@@ -250,7 +293,8 @@ pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<
                         // Failure to renew stops local execution. The coordinator owns retry decisions.
                         if let Err(error) = client.post::<Value>(&format!("/v1/jobs/{}/renew",job.id),json!({"lease_id":lease})).await {
                             // Drain the bounded inference request before another claim; never settle a revoked lease.
-                            let _ = execution.await;
+                            // Dropping the sandbox future forcibly removes its container.
+                            if config.sandbox.is_none() { let _ = execution.await; }
                             return Err(error);
                         }
                         // The registration remains fresh during a lease without probing/warming another inference.

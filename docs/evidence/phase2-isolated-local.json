@@ -1,0 +1,431 @@
+{
+  "testnet": false,
+  "gpu": true,
+  "chain": {
+    "rpc_url": "http://127.0.0.1:34813",
+    "chain_id": 31337,
+    "token": "0xe78a0f7e598cc8b0bb87894b0f60dd2a88d6a8ab",
+    "escrow": "0x5b1869d9a4c187f2eaa108f3062412ecf0526b24",
+    "escrow_code_sha256": "d754dfb552f091679d95e997f8fcaf20cb809b1d707ae3f0cab520b85e863896",
+    "microusdc_per_item": 1000,
+    "confirmations": 1,
+    "wallets": {
+      "buyer": "0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1",
+      "worker": "0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0"
+    }
+  },
+  "accounts": {
+    "buyer": "0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1",
+    "operator": "0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0",
+    "settler": "0x22d491Bde2303f2f43325b2108D26f1eAbA1e32b"
+  },
+  "operator_before_microusdc": "0",
+  "transactions": [
+    {
+      "role": "buyer",
+      "transaction_hash": "0x1ee41e456b4ec0c8a825ed4c64995afed849fc5adada2f24539613ecf680b243"
+    },
+    {
+      "role": "buyer",
+      "transaction_hash": "0x9564aecd0ba2b1e7233aca84af57e3ab549754e3f97a861c4b2b22ef0239eb28"
+    },
+    {
+      "role": "buyer",
+      "transaction_hash": "0x34cef6de28d503fd361a2e337f66e57f2cd49b9dd1cb03efd3e0dd5ba939fa17"
+    },
+    {
+      "role": "buyer",
+      "transaction_hash": "0x7884a3345932c6b439baddc39c1282bf293a45ea876e33139cf7e496b11fcbb8"
+    },
+    {
+      "role": "buyer",
+      "transaction_hash": "0x841ab8d01a4fe9c0f082a2cb237172511fd0762450867562065366a93d077c3f"
+    },
+    {
+      "role": "settler",
+      "transaction_hash": "0x408713a2e3e6bafa98918665debcbe2898628ae849219f28988f3b26fbdfcef9"
+    },
+    {
+      "job": "ed1dc887-8361-4372-bb67-984f67bfb2aa",
+      "action": "settle",
+      "transaction_hash": "0x408713a2e3e6bafa98918665debcbe2898628ae849219f28988f3b26fbdfcef9"
+    },
+    {
+      "role": "settler",
+      "transaction_hash": "0x65bb99b7cb7cb00f58a22b4cabea4f148fa671b2521c541708897b549c5f7ec3"
+    },
+    {
+      "job": "31a96d66-8dc6-4dfa-b10c-a683a4bf0f67",
+      "action": "voidUnfunded",
+      "transaction_hash": "0x65bb99b7cb7cb00f58a22b4cabea4f148fa671b2521c541708897b549c5f7ec3"
+    },
+    {
+      "role": "buyer",
+      "transaction_hash": "0x49c2a20571f42c6b4f1a26d057e2bd51abd97caab7b9d4c77194268c76db07f2"
+    },
+    {
+      "role": "buyer",
+      "transaction_hash": "0xc4fe4adb87dc9a020905865abd3c6b2cc8ee335c129d1c66a329d5470c174037"
+    },
+    {
+      "role": "settler",
+      "transaction_hash": "0x3d968b7c12ef44b0dad9448e06b51a3ad2c3163b35a63c6c7e5c3caac1b52cae"
+    },
+    {
+      "job": "6fecef87-7b52-4e1f-b431-bd6a5dcb74e7",
+      "action": "refund",
+      "transaction_hash": "0x3d968b7c12ef44b0dad9448e06b51a3ad2c3163b35a63c6c7e5c3caac1b52cae"
+    }
+  ],
+  "results": [
+    {
+      "payment": null,
+      "id": "317c8d70-2dec-484f-b5f1-1262420bc3df",
+      "owner": "buyer",
+      "spec": {
+        "idempotency_key": "0b8567fd-7e87-41e7-be17-ebcec7d2dd79",
+        "mode": {
+          "kind": "private",
+          "pool_id": "circle"
+        },
+        "workload": {
+          "kind": "embeddings",
+          "model": "all-minilm:latest",
+          "texts": [
+            "Isolated distributed compute document 0",
+            "Isolated distributed compute document 1",
+            "Isolated distributed compute document 2",
+            "Isolated distributed compute document 3",
+            "Isolated distributed compute document 4",
+            "Isolated distributed compute document 5",
+            "Isolated distributed compute document 6",
+            "Isolated distributed compute document 7",
+            "Isolated distributed compute document 8",
+            "Isolated distributed compute document 9",
+            "Isolated distributed compute document 10",
+            "Isolated distributed compute document 11",
+            "Isolated distributed compute document 12",
+            "Isolated distributed compute document 13",
+            "Isolated distributed compute document 14",
+            "Isolated distributed compute document 15",
+            "Isolated distributed compute document 16",
+            "Isolated distributed compute document 17",
+            "Isolated distributed compute document 18",
+            "Isolated distributed compute document 19",
+            "Isolated distributed compute document 20",
+            "Isolated distributed compute document 21",
+            "Isolated distributed compute document 22",
+            "Isolated distributed compute document 23",
+            "Isolated distributed compute document 24",
+            "Isolated distributed compute document 25",
+            "Isolated distributed compute document 26",
+            "Isolated distributed compute document 27",
+            "Isolated distributed compute document 28",
+            "Isolated distributed compute document 29",
+            "Isolated distributed compute document 30",
+            "Isolated distributed compute document 31",
+            "Isolated distributed compute document 32"
+          ],
+          "model_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef"
+        },
+        "resources": {
+          "cpu_threads": 1,
+          "memory_mib": 2048,
+          "require_gpu": true
+        }
+      },
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": 1792194034,
+      "deadline": 1792194634,
+      "worker": "worker",
+      "lease_until": 1792194098,
+      "run_started_at": 1792194036,
+      "error": null,
+      "receipt": {
+        "authority": "coordinator",
+        "charged_credits": 0,
+        "completed_at": 1792194073,
+        "currency": "TEST_CREDIT",
+        "elapsed_seconds": 37,
+        "execution": {
+          "backend": "ollama",
+          "batches": 3,
+          "dimensions": 384,
+          "fully_gpu_resident": true,
+          "gpu_bytes": 27137146,
+          "hardware": [
+            {
+              "driver": "610.88",
+              "memory_free_mib": 15118,
+              "memory_total_mib": 16376,
+              "name": "NVIDIA GeForce RTX 4080",
+              "temperature_c": 47,
+              "utilization_pct": 13,
+              "uuid": "GPU-b02ef7d8-a20c-f939-e352-bffb28d93663"
+            }
+          ],
+          "load_duration_ns": 666787287,
+          "model": "all-minilm:latest",
+          "model_bytes": 27137146,
+          "model_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef",
+          "prompt_tokens": 231,
+          "runtime_version": "0.40.5",
+          "total_duration_ns": 5432504190,
+          "wall_ms": 28083
+        },
+        "execution_assurance": "worker_reported",
+        "job_id": "317c8d70-2dec-484f-b5f1-1262420bc3df",
+        "mode": "private",
+        "redeemable": false,
+        "result_sha256": "975259ac354f20bba888db7435c30b931c8d4f50ad612776ff28c9a5ed9e1d97",
+        "signature": null,
+        "verification": "shape_only_trusted_worker",
+        "version": 1,
+        "worker": "worker"
+      },
+      "reserved_credits": 0
+    },
+    {
+      "payment": null,
+      "id": "69eaf734-e4fd-43b9-86b7-1034c2d0b9b9",
+      "owner": "buyer",
+      "spec": {
+        "idempotency_key": "fc79aa8c-0bdf-4cd8-98e2-cb87debf84ec",
+        "mode": {
+          "kind": "collective",
+          "project_id": "science"
+        },
+        "workload": {
+          "kind": "embeddings",
+          "model": "all-minilm:latest",
+          "texts": [
+            "Isolated distributed compute document 0",
+            "Isolated distributed compute document 1",
+            "Isolated distributed compute document 2",
+            "Isolated distributed compute document 3",
+            "Isolated distributed compute document 4",
+            "Isolated distributed compute document 5",
+            "Isolated distributed compute document 6",
+            "Isolated distributed compute document 7",
+            "Isolated distributed compute document 8",
+            "Isolated distributed compute document 9",
+            "Isolated distributed compute document 10",
+            "Isolated distributed compute document 11",
+            "Isolated distributed compute document 12",
+            "Isolated distributed compute document 13",
+            "Isolated distributed compute document 14",
+            "Isolated distributed compute document 15",
+            "Isolated distributed compute document 16",
+            "Isolated distributed compute document 17",
+            "Isolated distributed compute document 18",
+            "Isolated distributed compute document 19",
+            "Isolated distributed compute document 20",
+            "Isolated distributed compute document 21",
+            "Isolated distributed compute document 22",
+            "Isolated distributed compute document 23",
+            "Isolated distributed compute document 24",
+            "Isolated distributed compute document 25",
+            "Isolated distributed compute document 26",
+            "Isolated distributed compute document 27",
+            "Isolated distributed compute document 28",
+            "Isolated distributed compute document 29",
+            "Isolated distributed compute document 30",
+            "Isolated distributed compute document 31",
+            "Isolated distributed compute document 32"
+          ],
+          "model_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef"
+        },
+        "resources": {
+          "cpu_threads": 1,
+          "memory_mib": 2048,
+          "require_gpu": true
+        }
+      },
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": 1792194073,
+      "deadline": 1792194673,
+      "worker": "worker",
+      "lease_until": 1792194137,
+      "run_started_at": 1792194075,
+      "error": null,
+      "receipt": {
+        "authority": "coordinator",
+        "charged_credits": 0,
+        "completed_at": 1792194113,
+        "currency": "TEST_CREDIT",
+        "elapsed_seconds": 38,
+        "execution": {
+          "backend": "ollama",
+          "batches": 3,
+          "dimensions": 384,
+          "fully_gpu_resident": true,
+          "gpu_bytes": 27137146,
+          "hardware": [
+            {
+              "driver": "610.88",
+              "memory_free_mib": 15119,
+              "memory_total_mib": 16376,
+              "name": "NVIDIA GeForce RTX 4080",
+              "temperature_c": 47,
+              "utilization_pct": 10,
+              "uuid": "GPU-b02ef7d8-a20c-f939-e352-bffb28d93663"
+            }
+          ],
+          "load_duration_ns": 1161166694,
+          "model": "all-minilm:latest",
+          "model_bytes": 27137146,
+          "model_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef",
+          "prompt_tokens": 231,
+          "runtime_version": "0.40.5",
+          "total_duration_ns": 6157234196,
+          "wall_ms": 29729
+        },
+        "execution_assurance": "worker_reported",
+        "job_id": "69eaf734-e4fd-43b9-86b7-1034c2d0b9b9",
+        "mode": "collective",
+        "redeemable": false,
+        "result_sha256": "4cbf61864655babf6ed2ebde3ca302d588b2f8875febdbe00ac5ddce9f350059",
+        "signature": null,
+        "verification": "shape_only_trusted_worker",
+        "version": 1,
+        "worker": "worker"
+      },
+      "reserved_credits": 0
+    },
+    {
+      "payment": {
+        "chain_id": 31337,
+        "token": "0xe78a0f7e598cc8b0bb87894b0f60dd2a88d6a8ab",
+        "escrow": "0x5b1869d9a4c187f2eaa108f3062412ecf0526b24",
+        "key": "0xb7b9db4fffe9b3dadb13b4e92ea7ee31d40967dad0c2ee4b656a79e0bd4cc1e2",
+        "buyer": "0x90f8bf6a479f320ead074411a4b0e7944ea8c9c1",
+        "operator": "0xffcf8fdee72ac11b5c542428b35eef5769c409f0",
+        "operator_id": "worker",
+        "amount_microusdc": 33000,
+        "expires": 1792197713,
+        "confirmed_block": "0x6",
+        "confirmed_block_hash": "0x80694a96fe2072d11b1298dea70d4a61ba1fb5649355025ab2259cab76d17f47"
+      },
+      "id": "ed1dc887-8361-4372-bb67-984f67bfb2aa",
+      "owner": "buyer",
+      "spec": {
+        "idempotency_key": "261882e8-c27e-4ae3-87a8-6bf2e9a2c5b5",
+        "mode": {
+          "kind": "paid_usdc",
+          "max_cost_microusdc": 100000,
+          "operator": "worker"
+        },
+        "workload": {
+          "kind": "embeddings",
+          "model": "all-minilm:latest",
+          "texts": [
+            "Isolated distributed compute document 0",
+            "Isolated distributed compute document 1",
+            "Isolated distributed compute document 2",
+            "Isolated distributed compute document 3",
+            "Isolated distributed compute document 4",
+            "Isolated distributed compute document 5",
+            "Isolated distributed compute document 6",
+            "Isolated distributed compute document 7",
+            "Isolated distributed compute document 8",
+            "Isolated distributed compute document 9",
+            "Isolated distributed compute document 10",
+            "Isolated distributed compute document 11",
+            "Isolated distributed compute document 12",
+            "Isolated distributed compute document 13",
+            "Isolated distributed compute document 14",
+            "Isolated distributed compute document 15",
+            "Isolated distributed compute document 16",
+            "Isolated distributed compute document 17",
+            "Isolated distributed compute document 18",
+            "Isolated distributed compute document 19",
+            "Isolated distributed compute document 20",
+            "Isolated distributed compute document 21",
+            "Isolated distributed compute document 22",
+            "Isolated distributed compute document 23",
+            "Isolated distributed compute document 24",
+            "Isolated distributed compute document 25",
+            "Isolated distributed compute document 26",
+            "Isolated distributed compute document 27",
+            "Isolated distributed compute document 28",
+            "Isolated distributed compute document 29",
+            "Isolated distributed compute document 30",
+            "Isolated distributed compute document 31",
+            "Isolated distributed compute document 32"
+          ],
+          "model_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef"
+        },
+        "resources": {
+          "cpu_threads": 1,
+          "memory_mib": 2048,
+          "require_gpu": true
+        }
+      },
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": 1792194113,
+      "deadline": 1792194713,
+      "worker": "worker",
+      "lease_until": 1792194222,
+      "run_started_at": 1792194152,
+      "error": null,
+      "receipt": {
+        "amount_microusdc": 33000,
+        "authority": "coordinator",
+        "chain_id": 31337,
+        "charged_credits": null,
+        "completed_at": 1792194199,
+        "confirmed_block_hash": "0x80694a96fe2072d11b1298dea70d4a61ba1fb5649355025ab2259cab76d17f47",
+        "currency": "USDC",
+        "elapsed_seconds": 47,
+        "escrow": "0x5b1869d9a4c187f2eaa108f3062412ecf0526b24",
+        "execution": {
+          "backend": "ollama",
+          "batches": 3,
+          "dimensions": 384,
+          "fully_gpu_resident": true,
+          "gpu_bytes": 27137146,
+          "hardware": [
+            {
+              "driver": "610.88",
+              "memory_free_mib": 15117,
+              "memory_total_mib": 16376,
+              "name": "NVIDIA GeForce RTX 4080",
+              "temperature_c": 47,
+              "utilization_pct": 11,
+              "uuid": "GPU-b02ef7d8-a20c-f939-e352-bffb28d93663"
+            }
+          ],
+          "load_duration_ns": 381606457,
+          "model": "all-minilm:latest",
+          "model_bytes": 27137146,
+          "model_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef",
+          "prompt_tokens": 231,
+          "runtime_version": "0.40.5",
+          "total_duration_ns": 5689276378,
+          "wall_ms": 34588
+        },
+        "execution_assurance": "worker_reported",
+        "job_id": "ed1dc887-8361-4372-bb67-984f67bfb2aa",
+        "mode": "paid",
+        "operator_address": "0xffcf8fdee72ac11b5c542428b35eef5769c409f0",
+        "payment_state": "paid",
+        "redeemable": false,
+        "result_sha256": "a721b2187510127e7531a6a4aca9eafb9c6740ef030bf27709c007a96edc951b",
+        "signature": null,
+        "verification": "shape_only_trusted_worker",
+        "version": 1,
+        "worker": "worker"
+      },
+      "reserved_credits": 0
+    }
+  ],
+  "operator_after_microusdc": "33000",
+  "restart_idempotency": true,
+  "recovered_after_payout_before_ack": true,
+  "funded_refund": true,
+  "unfunded_void": true,
+  "completed_at": "2026-10-16T23:43:23.122Z"
+}

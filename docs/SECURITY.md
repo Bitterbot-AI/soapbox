@@ -1,5 +1,7 @@
 # Security and operating limits
 
+> Current isolation and USDC extension: [Phase 2 isolation and payments](PHASE-2-ISOLATION-PAYMENTS.md). Earlier TEST_CREDIT/shared-host descriptions below refer to the original pilot.
+
 ## Trust model for v0.2
 
 Use explicit, trusted operators and nonsensitive pilot inputs. The coordinator sees input

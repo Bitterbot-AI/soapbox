@@ -1,5 +1,7 @@
 # Runbook and Bitterbot integration
 
+> Current isolation and USDC extension: [Phase 2 isolation and payments](PHASE-2-ISOLATION-PAYMENTS.md). Earlier TEST_CREDIT/shared-host descriptions below refer to the original pilot.
+
 ## Development on this machine
 
 The Java source is D:\Soapbox. The new repository is D:\Bitterbot\soapbox.

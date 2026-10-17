@@ -13,5 +13,6 @@
   "memory_mib": 256,
   "ollama_model": null,
   "pause_file": "data/PAUSE",
-  "min_price_credits": 1
+  "min_price_credits": 1,
+  "allow_unsafe_host": true
 }

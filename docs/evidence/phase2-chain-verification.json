@@ -1,0 +1,15 @@
+{
+  "verified_at": "2026-10-17T00:44:32.389Z",
+  "rpc": "https://base-sepolia-rpc.publicnode.com",
+  "chain_id": 84532,
+  "buyer_funding": "0x4fe0382f0f3f0e8ea1442c726fdb96106aad6d177644f7c3287092fc3aa606e9",
+  "payout": "0x4d36c054324a4ad7a32e3454adee72b7b14facfcd096d607f512618e41ab1184",
+  "payout_block": "48214720",
+  "payout_block_hash": "0x86ca6875d59c724dcd85e924668f9b35a62f53a70de019d182482cefbf836aa7",
+  "operator_microusdc": "33000",
+  "escrow_microusdc": "0",
+  "transfer_to": "0xCD457D157357627e2048B4BE958D8b937C1C7af5",
+  "transfer_microusdc": "33000",
+  "state": "settled",
+  "result_sha256": "ba79ec5d6209f9b04e47093768bf0f97f693825def65271932b650f5d7120879"
+}

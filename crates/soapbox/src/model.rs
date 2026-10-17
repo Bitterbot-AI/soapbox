@@ -21,14 +21,24 @@ pub fn digest(data: &[u8]) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Mode {
-    Paid { max_cost_credits: u64 },
-    Private { pool_id: String },
-    Collective { project_id: String },
+    Paid {
+        max_cost_credits: u64,
+    },
+    PaidUsdc {
+        max_cost_microusdc: u64,
+        operator: String,
+    },
+    Private {
+        pool_id: String,
+    },
+    Collective {
+        project_id: String,
+    },
 }
 impl Mode {
     pub fn name(&self) -> &str {
         match self {
-            Self::Paid { .. } => "paid",
+            Self::Paid { .. } | Self::PaidUsdc { .. } => "paid",
             Self::Private { .. } => "private",
             Self::Collective { .. } => "collective",
         }
@@ -196,6 +206,8 @@ impl Submit {
 #[serde(deny_unknown_fields)]
 pub struct Offer {
     #[serde(default)]
+    pub isolation: Option<String>,
+    #[serde(default)]
     pub runtime: Option<crate::gpu::Runtime>,
     #[serde(default)]
     pub hardware: Vec<crate::gpu::Gpu>,
@@ -246,6 +258,7 @@ impl Offer {
         }
         match &spec.mode {
             Mode::Paid { .. } => spec.workload.price() >= self.min_price_credits,
+            Mode::PaidUsdc { .. } => self.isolation.as_deref() == Some("docker_v1"),
             Mode::Private { pool_id } => self.pools.contains(pool_id),
             Mode::Collective { project_id } => self.projects.contains(project_id),
         }
@@ -253,6 +266,8 @@ impl Offer {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Job {
+    #[serde(default)]
+    pub payment: Option<crate::payment::Payment>,
     pub id: String,
     pub owner: String,
     pub spec: Submit,

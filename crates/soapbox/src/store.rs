@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 pub struct Store {
+    pub payments: Option<crate::payment::PaymentConfig>,
     pub db: Connection,
     pub collective_daily_items: u64,
     pub artifact_quota_bytes: u64,
@@ -34,6 +35,7 @@ impl Store {
         let version: i64 = db.query_row("SELECT version FROM meta", [], |r| r.get(0))?;
         ensure!(version == 1, "unsupported database schema");
         Ok(Self {
+            payments: None,
             db,
             collective_daily_items: daily_items,
             artifact_quota_bytes: artifact_bytes,
@@ -140,12 +142,13 @@ impl Store {
             return Ok(job);
         }
         let active: u64 = tx.query_row(
-            "SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')",
+            "SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running','awaiting_payment')",
             [],
             |r| r.get(0),
         )?;
         ensure!(active < 256, "queue full");
         let mut job = Job {
+            payment: None,
             id: Uuid::new_v4().to_string(),
             owner: p.id.clone(),
             spec,
@@ -202,6 +205,24 @@ impl Store {
                     ON CONFLICT(owner,project,day) DO UPDATE SET items=items+excluded.items",
                     params![p.id, project_id, at / 86400, items],
                 )?;
+            }
+            Mode::PaidUsdc {
+                max_cost_microusdc,
+                operator,
+            } => {
+                let cfg = self
+                    .payments
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("USDC settlement is disabled"))?;
+                job.payment = Some(cfg.quote(
+                    &job.id,
+                    &job.owner,
+                    operator,
+                    &job.spec,
+                    *max_cost_microusdc,
+                    at,
+                )?);
+                job.status = "awaiting_payment".into();
             }
             Mode::Private { .. } => {}
         }
@@ -304,6 +325,10 @@ impl Store {
             if job.status != "queued"
                 || !p.permits(&job.spec.mode)
                 || !node.offer.accepts(&job.spec)
+                || job
+                    .payment
+                    .as_ref()
+                    .is_some_and(|pay| pay.operator_id != p.id)
             {
                 continue;
             }
@@ -342,7 +367,7 @@ impl Store {
     ) -> Result<Job> {
         let tx = self.db.transaction()?;
         let mut job = get(&tx, id)?;
-        if job.status == "succeeded"
+        if (job.status == "succeeded" || job.status == "settlement_pending")
             && job.worker.as_ref() == Some(&p.id)
             && job.lease_id.as_ref() == Some(&completion.lease_id)
         {
@@ -387,6 +412,14 @@ impl Store {
             "elapsed_seconds":at-job.run_started_at.unwrap_or(at),"result_sha256":digest(&serde_json::to_vec(&completion.result)?),
             "execution":completion.result.get("execution"),"execution_assurance":"worker_reported","signature":null,"authority":"coordinator","redeemable":false}),
         );
+        if let Some(payment) = &job.payment {
+            job.status = "settlement_pending".into();
+            let receipt = job.receipt.as_mut().unwrap();
+            receipt["currency"] = json!("USDC");
+            receipt["charged_credits"] = Value::Null;
+            receipt["amount_microusdc"] = json!(payment.amount_microusdc);
+            receipt["payment_state"] = json!("pending");
+        }
         job.result = Some(completion.result);
         save(&tx, &job)?;
         tx.commit()?;
@@ -405,7 +438,7 @@ impl Store {
         let tx = self.db.transaction()?;
         let mut job = get(&tx, id)?;
         ensure!(p.id == job.owner || p.has("admin"), "job not accessible");
-        if job.status == "queued" || job.status == "running" {
+        if ["queued", "running", "awaiting_payment"].contains(&job.status.as_str()) {
             job.status = "cancelled".into();
             refund(&tx, &mut job, at)?;
             save(&tx, &job)?;
@@ -496,7 +529,7 @@ fn get(db: &Connection, id: &str) -> Result<Job> {
         &data.ok_or_else(|| anyhow::anyhow!("job not found"))?,
     )?)
 }
-fn save(tx: &Transaction<'_>, job: &Job) -> Result<()> {
+pub(crate) fn save(tx: &Transaction<'_>, job: &Job) -> Result<()> {
     tx.execute(
         "UPDATE jobs SET status=?1,data=?2 WHERE id=?3",
         params![job.status, serde_json::to_string(job)?, job.id],
@@ -505,7 +538,7 @@ fn save(tx: &Transaction<'_>, job: &Job) -> Result<()> {
 }
 fn all_active(tx: &Transaction<'_>) -> Result<Vec<Job>> {
     let mut stmt =
-        tx.prepare("SELECT data FROM jobs WHERE status IN ('queued','running') ORDER BY rowid")?;
+        tx.prepare("SELECT data FROM jobs WHERE status IN ('queued','running','awaiting_payment') ORDER BY rowid")?;
     let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
     rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
 }
@@ -523,6 +556,9 @@ fn check_lease(job: &Job, p: &Principal, lease: &str, at: i64) -> Result<()> {
     Ok(())
 }
 fn refund(tx: &Transaction<'_>, job: &mut Job, at: i64) -> Result<()> {
+    if job.payment.is_some() {
+        job.status = "refund_pending".into();
+    }
     if job.reserved_credits > 0 {
         let amount = job.reserved_credits;
         tx.execute(

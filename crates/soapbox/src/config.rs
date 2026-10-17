@@ -20,7 +20,7 @@ impl Principal {
     }
     pub fn permits(&self, mode: &Mode) -> bool {
         match mode {
-            Mode::Paid { .. } => true,
+            Mode::Paid { .. } | Mode::PaidUsdc { .. } => true,
             Mode::Private { pool_id } => self.pools.contains(pool_id),
             Mode::Collective { project_id } => self.projects.contains(project_id),
         }
@@ -33,6 +33,8 @@ impl Principal {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub payments: Option<crate::payment::PaymentConfig>,
     pub principals: Vec<Principal>,
     #[serde(default = "quota")]
     pub collective_daily_items: u64,
@@ -52,6 +54,9 @@ impl Config {
             !config.principals.is_empty(),
             "at least one principal required"
         );
+        if let Some(payment) = &config.payments {
+            payment.validate()?;
+        }
         let mut ids = HashSet::new();
         let mut tokens = HashSet::new();
         for p in &config.principals {

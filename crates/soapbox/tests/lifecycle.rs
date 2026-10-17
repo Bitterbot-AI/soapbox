@@ -24,6 +24,7 @@ fn spec(key: &str, mode: Mode) -> Submit {
 }
 fn offer() -> Offer {
     Offer {
+        isolation: None,
         runtime: None,
         hardware: vec![],
         gpu_unavailable_reason: None,
@@ -426,4 +427,160 @@ fn pinned_gpu_results_require_matching_runtime_evidence_before_settlement() {
     }
     spec.idempotency_key = "unpinned".into();
     assert!(s.submit(&buyer, spec, 103).is_err());
+}
+
+fn usdc_config() -> soapbox::payment::PaymentConfig {
+    soapbox::payment::PaymentConfig {
+        rpc_url: "http://127.0.0.1:8545".into(),
+        chain_id: 31337,
+        token: format!("0x{}", "1".repeat(40)),
+        escrow: format!("0x{}", "2".repeat(40)),
+        escrow_code_sha256: "a".repeat(64),
+        microusdc_per_item: 1000,
+        confirmations: 1,
+        wallets: [
+            ("buyer".into(), format!("0x{}", "3".repeat(40))),
+            ("worker".into(), format!("0x{}", "4".repeat(40))),
+        ]
+        .into(),
+    }
+}
+fn observation(state: u64, result: &str) -> soapbox::payment::Observation {
+    soapbox::payment::Observation {
+        state,
+        result: result.into(),
+        block: "0x10".into(),
+        hash: format!("0x{}", "b".repeat(64)),
+    }
+}
+#[test]
+fn usdc_requires_funding_isolation_bound_operator_and_confirmed_payout() {
+    let mut s = store();
+    s.payments = Some(usdc_config());
+    let at = now();
+    let buyer = principal("buyer");
+    let worker = principal("worker");
+    let request = spec(
+        "usdc",
+        Mode::PaidUsdc {
+            max_cost_microusdc: 2000,
+            operator: "worker".into(),
+        },
+    );
+    let quoted = s.submit(&buyer, request.clone(), at).unwrap();
+    assert_eq!(quoted.status, "awaiting_payment");
+    assert_eq!(s.submit(&buyer, request, at).unwrap().id, quoted.id);
+    s.register(&worker, offer(), at).unwrap();
+    assert!(s.claim(&worker, at).unwrap().is_none());
+    s.apply_payment(&quoted.id, observation(1, "")).unwrap();
+    assert!(
+        s.claim(&worker, at).unwrap().is_none(),
+        "shared-host worker cannot earn USDC"
+    );
+    let mut isolated = offer();
+    isolated.isolation = Some("docker_v1".into());
+    s.register(&principal("other"), isolated.clone(), at)
+        .unwrap();
+    assert!(
+        s.claim(&principal("other"), at).unwrap().is_none(),
+        "quote pins operator"
+    );
+    s.register(&worker, isolated, at).unwrap();
+    let leased = s.claim(&worker, at).unwrap().unwrap();
+    let completed = finish(&mut s, &worker, &leased, at + 1);
+    assert_eq!(completed.status, "settlement_pending");
+    assert_eq!(s.balance("worker").unwrap()["available_credits"], 0);
+    assert!(s
+        .apply_payment(&quoted.id, observation(2, "0xwrong"))
+        .is_err());
+    let hash = format!(
+        "0x{}",
+        completed.receipt.unwrap()["result_sha256"]
+            .as_str()
+            .unwrap()
+    );
+    let paid = s.apply_payment(&quoted.id, observation(2, &hash)).unwrap();
+    assert_eq!(paid.status, "succeeded");
+    assert_eq!(paid.receipt.unwrap()["payment_state"], "paid");
+    assert_eq!(
+        s.apply_payment(&quoted.id, observation(2, &hash))
+            .unwrap()
+            .status,
+        "succeeded"
+    );
+    assert!(s.apply_payment(&quoted.id, observation(3, "")).is_err());
+}
+#[test]
+fn usdc_cancellation_cannot_requeue_after_late_funding_and_can_void_unfunded_quote() {
+    let mut s = store();
+    s.payments = Some(usdc_config());
+    let at = now();
+    let buyer = principal("buyer");
+    let job = s
+        .submit(
+            &buyer,
+            spec(
+                "cancel-usdc",
+                Mode::PaidUsdc {
+                    max_cost_microusdc: 2000,
+                    operator: "worker".into(),
+                },
+            ),
+            at,
+        )
+        .unwrap();
+    assert_eq!(
+        s.cancel(&buyer, &job.id, at).unwrap().status,
+        "refund_pending"
+    );
+    assert_eq!(
+        s.apply_payment(&job.id, observation(1, "")).unwrap().status,
+        "refund_pending"
+    );
+    assert_eq!(
+        s.apply_payment(&job.id, observation(3, "")).unwrap().status,
+        "refunded"
+    );
+    let job = s
+        .submit(
+            &buyer,
+            spec(
+                "void-usdc",
+                Mode::PaidUsdc {
+                    max_cost_microusdc: 2000,
+                    operator: "worker".into(),
+                },
+            ),
+            at,
+        )
+        .unwrap();
+    s.cancel(&buyer, &job.id, at).unwrap();
+    assert_eq!(
+        s.apply_payment(&job.id, observation(4, "")).unwrap().status,
+        "cancelled"
+    );
+}
+#[test]
+fn payment_config_rejects_mainnet_wrong_circle_token_and_over_budget() {
+    let mut cfg = usdc_config();
+    cfg.chain_id = 8453;
+    assert!(cfg.validate().is_err());
+    cfg.chain_id = 84532;
+    cfg.confirmations = 2;
+    assert!(cfg.validate().is_err());
+    let mut s = store();
+    s.payments = Some(usdc_config());
+    assert!(s
+        .submit(
+            &principal("buyer"),
+            spec(
+                "low",
+                Mode::PaidUsdc {
+                    max_cost_microusdc: 1,
+                    operator: "worker".into()
+                }
+            ),
+            now()
+        )
+        .is_err());
 }

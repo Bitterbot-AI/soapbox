@@ -247,7 +247,7 @@ mod tests {
     };
     fn config() -> WorkerConfig {
         serde_json::from_value(
-            json!({"modes":["private"],"pools":["circle"],"memory_mib":256,
+            json!({"allow_unsafe_host":true,"modes":["private"],"pools":["circle"],"memory_mib":256,
             "ollama_model":"test:latest","ollama_digest":"a".repeat(64)}),
         )
         .unwrap()
@@ -265,6 +265,7 @@ mod tests {
     }
     fn job() -> Job {
         Job {
+            payment: None,
             id: "test".into(),
             owner: "buyer".into(),
             status: "running".into(),
@@ -406,10 +407,11 @@ mod warmup_tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let mut config: WorkerConfig =
-            serde_json::from_value(json!({"modes":["private"],"memory_mib":256,
-            "ollama_model":"test:latest","ollama_digest":"b".repeat(64)}))
-            .unwrap();
+        let mut config: WorkerConfig = serde_json::from_value(
+            json!({"allow_unsafe_host":true,"modes":["private"],"memory_mib":256,
+            "ollama_model":"test:latest","ollama_digest":"b".repeat(64)}),
+        )
+        .unwrap();
         assert!(ready(&base, &config).await.is_err());
         assert!(!loaded.load(Ordering::SeqCst));
         config.ollama_digest = Some("a".repeat(64));

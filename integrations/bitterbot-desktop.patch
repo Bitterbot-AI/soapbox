@@ -84,9 +84,500 @@ index 0000000..c1cf1d2
 +    </section>
 +  );
 +}
+diff --git a/desktop/renderer/src/components/compute/ComputeSetup.test.tsx b/desktop/renderer/src/components/compute/ComputeSetup.test.tsx
+new file mode 100644
+index 0000000..ee67c6e
+--- /dev/null
++++ b/desktop/renderer/src/components/compute/ComputeSetup.test.tsx
+@@ -0,0 +1,91 @@
++import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
++import { afterEach, beforeEach, expect, it, vi } from "vitest";
++import type { SoapboxSetupStatus } from "../../../../../src/infra/soapbox-setup-types";
++import { ComputeSetup } from "./ComputeSetup";
++
++const fake = vi.hoisted(() => ({ request: vi.fn(), status: "connected" }));
++vi.mock("../../stores/gateway-store", () => ({
++  useGatewayStore: (selector: (s: typeof fake) => unknown) => selector(fake),
++}));
++let status: SoapboxSetupStatus;
++beforeEach(() => {
++  status = {
++    configured: false,
++    platformSupported: true,
++    hasWalletCredentials: false,
++    walletAddress: null,
++    release: {
++      url: "https://github.com/Bitterbot-AI/soapbox/releases/tag/v0.3.0-rc.1",
++      filename: "runtime.tar.gz",
++      bytes: 4,
++    },
++    progress: { state: "idle", message: "", percent: 0 },
++  };
++  fake.request.mockImplementation(async (method: string) => {
++    if (method === "soapbox.setup.wallet")
++      status = { ...status, walletAddress: `0x${"1".repeat(40)}` };
++    return status;
++  });
++});
++afterEach(() => {
++  cleanup();
++  vi.clearAllMocks();
++});
++it("creates a separate buyer wallet and clears entered secrets", async () => {
++  render(<ComputeSetup onClose={() => {}} />);
++  fireEvent.change(await screen.findByLabelText("CDP API key ID"), { target: { value: "key" } });
++  fireEvent.change(screen.getByLabelText("CDP API key secret"), { target: { value: "secret" } });
++  fireEvent.change(screen.getByLabelText("CDP wallet secret"), {
++    target: { value: "wallet-secret" },
++  });
++  fireEvent.click(screen.getByRole("button", { name: "Create test wallet" }));
++  await screen.findByLabelText("Test wallet address");
++  expect(fake.request).toHaveBeenCalledWith(
++    "soapbox.setup.wallet",
++    { credentials: { apiKeyId: "key", apiKeySecret: "secret", walletSecret: "wallet-secret" } },
++    { timeoutMs: 120000 },
++  );
++  expect(screen.queryByDisplayValue("wallet-secret")).toBeNull();
++  expect(
++    fake.request.mock.calls.some(
++      ([method]) => method === "wallet.setConfig" || method === "soapbox.payment.fund",
++    ),
++  ).toBe(false);
++});
++it("requires verified runtime and explicit consent before activating an operator", async () => {
++  status = {
++    ...status,
++    enrollment: {
++      role: "operator",
++      id: "gpu-test",
++      url: "https://compute.example",
++      address: `0x${"2".repeat(40)}`,
++      chain_id: 84532,
++    },
++    progress: { state: "preparing", message: "Verifying GPU execution and isolation", percent: 85 },
++  };
++  const rendered = render(<ComputeSetup onClose={() => {}} />);
++  const activate = await screen.findByRole("button", { name: "Activate operator" });
++  expect((activate as HTMLButtonElement).disabled).toBe(true);
++  expect(screen.queryByRole("button", { name: "Create test wallet" })).toBeNull();
++  expect(screen.getByText("Verifying GPU execution and isolation")).toBeTruthy();
++  rendered.unmount();
++  status = {
++    ...status,
++    progress: { state: "ready", message: "GPU runtime verified", percent: 100 },
++  };
++  render(<ComputeSetup onClose={() => {}} />);
++  const ready = await screen.findByRole("button", { name: "Activate operator" });
++  expect((ready as HTMLButtonElement).disabled).toBe(true);
++  fireEvent.click(screen.getByRole("checkbox"));
++  fireEvent.click(ready);
++  await waitFor(() => expect(fake.request).toHaveBeenCalledWith("soapbox.setup.activate"));
++});
++it("keeps configured gateways read only and explains where the tester runs setup", async () => {
++  status.configured = true;
++  status.configuredRole = "pilot";
++  render(<ComputeSetup onClose={() => {}} />);
++  await screen.findByText(/Compute is configured on this gateway/);
++  expect(screen.queryByLabelText("Enrollment file")).toBeNull();
++  expect(screen.getByText(/tester’s own Bitterbot app/)).toBeTruthy();
++});
+diff --git a/desktop/renderer/src/components/compute/ComputeSetup.tsx b/desktop/renderer/src/components/compute/ComputeSetup.tsx
+new file mode 100644
+index 0000000..6f60984
+--- /dev/null
++++ b/desktop/renderer/src/components/compute/ComputeSetup.tsx
+@@ -0,0 +1,388 @@
++import { useCallback, useEffect, useState } from "react";
++import type { SoapboxSetupStatus } from "../../../../../src/infra/soapbox-setup-types";
++import { useGatewayStore } from "../../stores/gateway-store";
++
++const button = "rounded-lg bg-brand px-4 py-2 text-sm text-white disabled:opacity-40";
++const field = "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm";
++const emptyCredentials = { apiKeyId: "", apiKeySecret: "", walletSecret: "" };
++
++export function ComputeSetup({ onClose }: { onClose: () => void }) {
++  const request = useGatewayStore((s) => s.request);
++  const connected = useGatewayStore((s) => s.status === "connected");
++  const [status, setStatus] = useState<SoapboxSetupStatus>();
++  const [role, setRole] = useState<"buyer" | "operator">("buyer");
++  const [credentials, setCredentials] = useState(emptyCredentials);
++  const [customCredentials, setCustomCredentials] = useState(false);
++  const [busy, setBusy] = useState(false);
++  const [error, setError] = useState("");
++  const [upload, setUpload] = useState<number>();
++  const [activating, setActivating] = useState(false);
++  const [acknowledged, setAcknowledged] = useState(false);
++  const refresh = useCallback(async () => {
++    const next = await request<SoapboxSetupStatus>("soapbox.setup.status");
++    setStatus(next);
++    if (next.enrollment) setRole(next.enrollment.role);
++  }, [request]);
++  useEffect(() => {
++    if (!connected) return;
++    let disposed = false;
++    let timer: ReturnType<typeof setTimeout>;
++    const poll = async () => {
++      try {
++        const next = await request<SoapboxSetupStatus>("soapbox.setup.status");
++        if (!disposed) {
++          setStatus(next);
++          if (next.enrollment) setRole(next.enrollment.role);
++        }
++      } catch (e) {
++        if (!disposed && !activating) setError(String(e));
++      } finally {
++        if (!disposed) timer = setTimeout(() => void poll(), 2000);
++      }
++    };
++    void poll();
++    return () => {
++      disposed = true;
++      clearTimeout(timer);
++    };
++  }, [request, connected, activating]);
++  const run = async (action: () => Promise<void>) => {
++    setBusy(true);
++    setError("");
++    try {
++      await action();
++      await refresh();
++    } catch (e) {
++      setError(String(e));
++    } finally {
++      setBusy(false);
++    }
++  };
++  const enrolled = status?.enrollment?.role === role;
++  const preparing = status?.progress.state === "preparing";
++  const locked = busy || preparing || !connected || activating;
++
++  const importEnrollment = async (file: File) => {
++    if (file.size > 16384) throw new Error("Enrollment files must be smaller than 16 KB");
++    await request("soapbox.setup.import", { enrollment: JSON.parse(await file.text()), role });
++    setAcknowledged(false);
++  };
++  const importRuntime = async (file: File) => {
++    if (!status || file.size !== status.release.bytes)
++      throw new Error("Select the approved runtime archive from the linked release");
++    setUpload(0);
++    try {
++      const started = await request<{ id: string }>("soapbox.setup.runtime.begin");
++      for (let offset = 0; offset < file.size; ) {
++        const bytes = new Uint8Array(await file.slice(offset, offset + 262144).arrayBuffer());
++        let binary = "";
++        for (let i = 0; i < bytes.length; i += 8192)
++          binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
++        const next = await request<{ offset: number }>("soapbox.setup.runtime.chunk", {
++          id: started.id,
++          offset,
++          data: btoa(binary),
++        });
++        offset = next.offset;
++        setUpload(Math.floor((offset / file.size) * 100));
++      }
++      await request("soapbox.setup.runtime.prepare", { id: started.id });
++    } finally {
++      setUpload(undefined);
++    }
++  };
++
++  return (
++    <section aria-label="Compute setup" className="rounded-xl border border-border p-5 space-y-4">
++      <div className="flex items-center justify-between gap-4">
++        <h2 className="font-semibold">Set up this device</h2>
++        <button className="text-sm underline" disabled={busy} onClick={onClose}>
++          Close setup
++        </button>
++      </div>
++      <p className="text-sm text-muted-foreground">
++        Base Sepolia test network. Compute uses a separate wallet and spending history. Your main
++        wallet stays on its current network.
++      </p>
++      {error && (
++        <p role="alert" className="text-sm text-danger">
++          {error}
++        </p>
++      )}
++      {!status && <p role="status">Loading setup…</p>}
++      {status?.configured ? (
++        <div className="space-y-2">
++          <p role="status">Compute is configured on this gateway ({status.configuredRole}).</p>
++          <p className="text-sm">
++            Use the Compute dashboard to submit work or manage your operator. Run setup on the
++            tester’s own Bitterbot app.
++          </p>
++          <button className={button} onClick={onClose}>
++            Open Compute dashboard
++          </button>
++        </div>
++      ) : (
++        status && (
++          <>
++            <fieldset disabled={locked || Boolean(status.enrollment)} className="space-y-2">
++              <legend className="text-sm font-medium">How will this device participate?</legend>
++              <label className="mr-5 text-sm">
++                <input
++                  type="radio"
++                  name="compute-role"
++                  checked={role === "buyer"}
++                  onChange={() => setRole("buyer")}
++                />{" "}
++                Buyer · submit jobs
++              </label>
++              <label className="text-sm">
++                <input
++                  type="radio"
++                  name="compute-role"
++                  checked={role === "operator"}
++                  onChange={() => setRole("operator")}
++                />{" "}
++                GPU operator · run jobs and earn test USDC
++              </label>
++            </fieldset>
++            {role === "buyer" && (
++              <div className="space-y-3 rounded-lg bg-muted/20 p-4">
++                <h3 className="font-medium">1. Create your Compute test wallet</h3>
++                {status.walletAddress ? (
++                  <>
++                    <p className="text-xs font-mono break-all" aria-label="Test wallet address">
++                      {status.walletAddress}
++                    </p>
++                    <p className="text-sm">
++                      Share this public address with the coordinator owner to receive your buyer
++                      enrollment. Fund it with Base Sepolia test USDC and test ETH for gas.
++                    </p>
++                    <p className="text-sm">
++                      Limits: 0.10 test USDC per job and 1 test USDC per day. Each job’s funding
++                      requires your approval in Compute.
++                    </p>
++                  </>
++                ) : (
++                  <>
++                    {status.hasWalletCredentials && (
++                      <label className="block text-sm">
++                        <input
++                          type="checkbox"
++                          checked={customCredentials}
++                          onChange={(e) => setCustomCredentials(e.target.checked)}
++                          disabled={locked}
++                        />{" "}
++                        Use different CDP credentials for Compute
++                      </label>
++                    )}
++                    {!status.hasWalletCredentials || customCredentials ? (
++                      <>
++                        <p className="text-sm">
++                          Enter your Coinbase Developer Platform API key and wallet secret. These
++                          are stored privately on this gateway for the Compute test wallet.
++                        </p>
++                        {(
++                          [
++                            ["apiKeyId", "CDP API key ID"],
++                            ["apiKeySecret", "CDP API key secret"],
++                            ["walletSecret", "CDP wallet secret"],
++                          ] as const
++                        ).map(([key, label]) => (
++                          <label key={key} className="block text-sm">
++                            {label}
++                            <input
++                              type="password"
++                              autoComplete="off"
++                              className={field}
++                              value={credentials[key]}
++                              disabled={locked}
++                              onChange={(e) =>
++                                setCredentials({ ...credentials, [key]: e.target.value })
++                              }
++                            />
++                          </label>
++                        ))}
++                      </>
++                    ) : (
++                      <p className="text-sm">
++                        Use the CDP credentials already configured on this gateway to create a
++                        separate Base Sepolia account.
++                      </p>
++                    )}
++                    <button
++                      className={button}
++                      disabled={
++                        locked ||
++                        ((!status.hasWalletCredentials || customCredentials) &&
++                          Object.values(credentials).some((v) => !v.trim()))
++                      }
++                      onClick={() =>
++                        void run(async () => {
++                          try {
++                            await request(
++                              "soapbox.setup.wallet",
++                              !status.hasWalletCredentials || customCredentials
++                                ? { credentials }
++                                : {},
++                              { timeoutMs: 120000 },
++                            );
++                          } finally {
++                            setCredentials(emptyCredentials);
++                          }
++                        })
++                      }
++                    >
++                      Create test wallet
++                    </button>
++                  </>
++                )}
++              </div>
++            )}
++            <div className="space-y-2">
++              <h3 className="font-medium">
++                {role === "buyer" ? "2" : "1"}. Import your {role} enrollment
++              </h3>
++              <p className="text-sm text-muted-foreground">
++                Choose the private enrollment JSON supplied by the coordinator owner.{" "}
++                {role === "operator" &&
++                  "It must contain the Base Sepolia address where you want to receive payouts. No wallet signing keys are needed."}
++              </p>
++              <label className="block text-sm">
++                Enrollment file
++                <input
++                  className={field}
++                  type="file"
++                  accept=".json,application/json"
++                  disabled={locked || (role === "buyer" && !status.walletAddress)}
++                  onChange={(e) => {
++                    const file = e.target.files?.[0];
++                    e.target.value = "";
++                    if (file) void run(() => importEnrollment(file));
++                  }}
++                />
++              </label>
++            </div>
++            {role === "operator" && (
++              <div className="space-y-2">
++                <h3 className="font-medium">2. Prepare your GPU</h3>
++                <p className="text-sm">
++                  Requires an Ubuntu x64 gateway (including WSL2), Docker with NVIDIA GPU support
++                  and swap limits, plus 3 GB of free disk space.
++                </p>
++                {!status.platformSupported && (
++                  <p role="alert" className="text-warning text-sm">
++                    This gateway platform cannot run the current GPU runtime. Use a Linux or WSL2
++                    gateway, or choose Buyer.
++                  </p>
++                )}
++                <p className="text-sm">
++                  <a
++                    className="underline"
++                    href={status.release.url}
++                    target="_blank"
++                    rel="noreferrer"
++                  >
++                    Download the approved runtime from the private release
++                  </a>
++                  , then choose <span className="font-mono text-xs">{status.release.filename}</span>{" "}
++                  below. GitHub access must be granted by the repository owner.
++                </p>
++                <label className="block text-sm">
++                  GPU runtime archive
++                  <input
++                    className={field}
++                    type="file"
++                    accept=".gz"
++                    disabled={locked || !enrolled || !status.platformSupported}
++                    onChange={(e) => {
++                      const file = e.target.files?.[0];
++                      e.target.value = "";
++                      if (file) void run(() => importRuntime(file));
++                    }}
++                  />
++                </label>
++                {(upload !== undefined || status.progress.state !== "idle") && (
++                  <div role="status" aria-live="polite">
++                    <p className="text-sm">
++                      {upload !== undefined
++                        ? `Uploading runtime · ${upload}%`
++                        : status.progress.message}
++                    </p>
++                    <progress
++                      className="w-full"
++                      aria-label="GPU setup progress"
++                      max={100}
++                      value={upload ?? status.progress.percent}
++                    />
++                  </div>
++                )}
++              </div>
++            )}
++            {enrolled && status.enrollment && (
++              <div className="rounded-lg border border-border p-4 space-y-3">
++                <h3 className="font-medium">Review and activate</h3>
++                <dl className="text-sm space-y-1">
++                  <div>
++                    <dt className="inline font-medium">Participant: </dt>
++                    <dd className="inline">
++                      {status.enrollment.id} · {role}
++                    </dd>
++                  </div>
++                  <div>
++                    <dt className="inline font-medium">Coordinator: </dt>
++                    <dd className="inline break-all">{status.enrollment.url}</dd>
++                  </div>
++                  <div>
++                    <dt className="inline font-medium">
++                      {role === "operator" ? "Payout" : "Buyer"} address:{" "}
++                    </dt>
++                    <dd className="inline font-mono text-xs break-all">
++                      {status.enrollment.address}
++                    </dd>
++                  </div>
++                  <div>
++                    <dt className="inline font-medium">Network: </dt>
++                    <dd className="inline">Base Sepolia (84532)</dd>
++                  </div>
++                </dl>
++                <label className="flex gap-2 text-sm">
++                  <input
++                    type="checkbox"
++                    checked={acknowledged}
++                    disabled={locked}
++                    onChange={(e) => setAcknowledged(e.target.checked)}
++                  />
++                  {role === "operator"
++                    ? "Allow this device to run approved paid workloads with 1 GiB of memory. I can pause new work from Compute."
++                    : "Use this test wallet for Compute. I will review and fund each job separately."}
++                </label>
++                <button
++                  className={button}
++                  disabled={
++                    locked ||
++                    !acknowledged ||
++                    (role === "operator" && status.progress.state !== "ready")
++                  }
++                  onClick={() =>
++                    void run(async () => {
++                      await request("soapbox.setup.activate");
++                      setActivating(true);
++                    })
++                  }
++                >
++                  Activate {role}
++                </button>
++                {activating && (
++                  <p role="status">
++                    Setup saved. The gateway is reconnecting; Compute will show your participant
++                    when ready.
++                  </p>
++                )}
++              </div>
++            )}
++          </>
++        )
++      )}
++    </section>
++  );
++}
 diff --git a/desktop/renderer/src/components/compute/ComputeView.test.tsx b/desktop/renderer/src/components/compute/ComputeView.test.tsx
 new file mode 100644
-index 0000000..06c6291
+index 0000000..2bfc5e1
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/ComputeView.test.tsx
 @@ -0,0 +1,230 @@
@@ -205,7 +696,7 @@ index 0000000..06c6291
 +  it("explains opt-in setup when the service is disabled", async () => {
 +    fake.request.mockResolvedValue({ enabled: false });
 +    render(<ComputeView />);
-+    expect(await screen.findByText("Connect a Soapbox service")).toBeTruthy();
++    expect(await screen.findByText("Get started with Compute")).toBeTruthy();
 +    expect(screen.queryByRole("button", { name: "Submit job" })).toBeNull();
 +  });
 +  it("submits a private job using an authorized pool and displays test-credit limits", async () => {
@@ -322,10 +813,10 @@ index 0000000..06c6291
 +});
 diff --git a/desktop/renderer/src/components/compute/ComputeView.tsx b/desktop/renderer/src/components/compute/ComputeView.tsx
 new file mode 100644
-index 0000000..4d95dab
+index 0000000..b9f0213
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/ComputeView.tsx
-@@ -0,0 +1,538 @@
+@@ -0,0 +1,549 @@
 +import { useCallback, useEffect, useState } from "react";
 +import type {
 +  SoapboxJob,
@@ -334,6 +825,7 @@ index 0000000..4d95dab
 +} from "../../../../../src/infra/soapbox-client";
 +import { useGatewayStore } from "../../stores/gateway-store";
 +import { ArtifactPanel } from "./ArtifactPanel";
++import { ComputeSetup } from "./ComputeSetup";
 +import { ComputeWalletPanel } from "./ComputeWalletPanel";
 +import { PaymentPanel } from "./PaymentPanel";
 +import { WorkerPanel } from "./WorkerPanel";
@@ -352,6 +844,7 @@ index 0000000..4d95dab
 +  const [snapshot, setSnapshot] = useState<SoapboxStatus | null>(null);
 +  const [error, setError] = useState<string | null>(null);
 +  const [busy, setBusy] = useState(false);
++  const [setupOpen, setSetupOpen] = useState(false);
 +  const [mode, setMode] = useState<SoapboxMode["kind"]>("private");
 +  const [scope, setScope] = useState("");
 +  const [workload, setWorkload] = useState<"sha256" | "embeddings">("sha256");
@@ -530,9 +1023,18 @@ index 0000000..4d95dab
 +            Run work on resources shared by participating operators.
 +          </p>
 +        </div>
-+        <button className={button} disabled={!connected || busy} onClick={() => void run(refresh)}>
-+          Refresh
-+        </button>
++        <div className="flex gap-2">
++          <button className={button} disabled={!connected} onClick={() => setSetupOpen(true)}>
++            Set up buyer or operator
++          </button>
++          <button
++            className={button}
++            disabled={!connected || busy}
++            onClick={() => void run(refresh)}
++          >
++            Refresh
++          </button>
++        </div>
 +      </div>
 +      {!connected && <p role="status">Connect to the gateway to use Soapbox.</p>}
 +      {error && (
@@ -540,13 +1042,13 @@ index 0000000..4d95dab
 +          {error}
 +        </p>
 +      )}
-+      {snapshot?.enabled === false && (
++      {setupOpen && <ComputeSetup onClose={() => setSetupOpen(false)} />}
++      {snapshot?.enabled === false && !setupOpen && (
 +        <div className="rounded-xl border border-border p-5 space-y-2">
-+          <h2 className="font-medium">Connect a Soapbox service</h2>
++          <h2 className="font-medium">Get started with Compute</h2>
 +          <p className="text-sm text-muted-foreground">
-+            Soapbox is optional and currently disabled on this gateway. Your operator can connect a
-+            coordinator and choose whether this device contributes resources. Setup instructions are
-+            in docs/network/soapbox.md.
++            Choose Buyer to submit work or GPU operator to contribute this device’s resources. Use
++            “Set up buyer or operator” above to import your enrollment and prepare this device.
 +          </p>
 +        </div>
 +      )}
@@ -1076,6 +1578,182 @@ index 3292083..2a6c930 100644
    // ── Advanced ──
    { id: "people", label: "Circles", icon: Users, group: "advanced" },
    { id: "p2p", label: "P2P Network", icon: Globe, group: "advanced" },
+diff --git a/docs/network/soapbox-gui-validation.json b/docs/network/soapbox-gui-validation.json
+new file mode 100644
+index 0000000..97c2945
+--- /dev/null
++++ b/docs/network/soapbox-gui-validation.json
+@@ -0,0 +1,170 @@
++{
++  "version": "0.3.0-rc.1",
++  "topology": "two desktop gateway profiles on one physical host",
++  "physical_two_machine_test": false,
++  "chain_id": 84532,
++  "job": {
++    "payment": {
++      "chain_id": 84532,
++      "token": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
++      "escrow": "0x85dbc619cd8f05e06a5fc231d04483b6aa7bff17",
++      "key": "0x40fa428b577946f24ebf649ed6757d1fb902e81a9dc81dbe77a1637ccfb5d00a",
++      "buyer": "0x6206c0743e09d07e2f29673f23a2cbd0f86e0795",
++      "operator": "0xcd457d157357627e2048b4be958d8b937c1c7af5",
++      "operator_id": "release-operator",
++      "amount_microusdc": 2000,
++      "expires": 1792263383,
++      "confirmed_block": "0x2e02c25",
++      "confirmed_block_hash": "0x31de92b9b2f13cea24dce02349544be1c85659fef918cda51a6bd34637104857"
++    },
++    "id": "0c3a70ce-bc8f-4f91-8f99-a07b44bb237e",
++    "owner": "buyer",
++    "spec": {
++      "idempotency_key": "9f8c8e94-3e34-4dcc-80d8-3fd9a0b36f86",
++      "mode": {
++        "kind": "paid_usdc",
++        "max_cost_microusdc": 2000,
++        "operator": "release-operator"
++      },
++      "workload": {
++        "kind": "embeddings",
++        "model": "all-minilm:latest",
++        "texts": [
++          "Installable buyer and operator test release",
++          "Base Sepolia GPU payment through two desktop profiles"
++        ],
++        "model_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef"
++      },
++      "resources": {
++        "cpu_threads": 1,
++        "memory_mib": 1024,
++        "require_gpu": true
++      }
++    },
++    "status": "succeeded",
++    "attempts": 1,
++    "created_at": 1792259783,
++    "deadline": 1792260383,
++    "worker": "release-operator",
++    "lease_id": "6c36ac4f-6196-4970-9853-43862cec1f60",
++    "lease_until": 1792259900,
++    "run_started_at": 1792259798,
++    "error": null,
++    "receipt": {
++      "amount_microusdc": 2000,
++      "authority": "coordinator",
++      "chain_id": 84532,
++      "charged_credits": null,
++      "completed_at": 1792259875,
++      "confirmed_block_hash": "0x31de92b9b2f13cea24dce02349544be1c85659fef918cda51a6bd34637104857",
++      "currency": "USDC",
++      "elapsed_seconds": 77,
++      "escrow": "0x85dbc619cd8f05e06a5fc231d04483b6aa7bff17",
++      "execution": {
++        "backend": "ollama",
++        "batches": 1,
++        "dimensions": 384,
++        "fully_gpu_resident": true,
++        "gpu_bytes": 27137146,
++        "hardware": [
++          {
++            "driver": "610.88",
++            "memory_free_mib": 15098,
++            "memory_total_mib": 16376,
++            "name": "NVIDIA GeForce RTX 4080",
++            "temperature_c": 46,
++            "utilization_pct": 1,
++            "uuid": "GPU-b02ef7d8-a20c-f939-e352-bffb28d93663"
++          }
++        ],
++        "load_duration_ns": 98280580,
++        "model": "all-minilm:latest",
++        "model_bytes": 27137146,
++        "model_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef",
++        "prompt_tokens": 22,
++        "runtime_version": "0.40.5",
++        "total_duration_ns": 10893913721,
++        "wall_ms": 39826
++      },
++      "execution_assurance": "worker_reported",
++      "job_id": "0c3a70ce-bc8f-4f91-8f99-a07b44bb237e",
++      "mode": "paid",
++      "operator_address": "0xcd457d157357627e2048b4be958d8b937c1c7af5",
++      "payment_state": "paid",
++      "redeemable": false,
++      "result_sha256": "c1ff39e917ce2d4b4624514d87d665946ecafdb41a44524b953dae067d356118",
++      "signature": null,
++      "verification": "shape_only_trusted_worker",
++      "version": 1,
++      "worker": "release-operator"
++    },
++    "reserved_credits": 0
++  },
++  "funding": {
++    "funding": {
++      "status": "funded",
++      "txHash": "0xafb2550ba05263701164dbe30a6dfc62143656cc49325cac3fecc90286c55b5f"
++    },
++    "job": {
++      "payment": {
++        "chain_id": 84532,
++        "token": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
++        "escrow": "0x85dbc619cd8f05e06a5fc231d04483b6aa7bff17",
++        "key": "0x40fa428b577946f24ebf649ed6757d1fb902e81a9dc81dbe77a1637ccfb5d00a",
++        "buyer": "0x6206c0743e09d07e2f29673f23a2cbd0f86e0795",
++        "operator": "0xcd457d157357627e2048b4be958d8b937c1c7af5",
++        "operator_id": "release-operator",
++        "amount_microusdc": 2000,
++        "expires": 1792263383,
++        "confirmed_block": "0x2e02bf9",
++        "confirmed_block_hash": "0x338639a19c99b0fcdadadf305214e4eeaee0db08f12ed019e1371fe91e55d17d"
++      },
++      "id": "0c3a70ce-bc8f-4f91-8f99-a07b44bb237e",
++      "owner": "buyer",
++      "spec": {
++        "idempotency_key": "9f8c8e94-3e34-4dcc-80d8-3fd9a0b36f86",
++        "mode": {
++          "kind": "paid_usdc",
++          "max_cost_microusdc": 2000,
++          "operator": "release-operator"
++        },
++        "workload": {
++          "kind": "embeddings",
++          "model": "all-minilm:latest",
++          "texts": [
++            "Installable buyer and operator test release",
++            "Base Sepolia GPU payment through two desktop profiles"
++          ],
++          "model_digest": "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef"
++        },
++        "resources": {
++          "cpu_threads": 1,
++          "memory_mib": 1024,
++          "require_gpu": true
++        }
++      },
++      "status": "queued",
++      "attempts": 0,
++      "created_at": 1792259783,
++      "deadline": 1792260383,
++      "worker": null,
++      "lease_id": null,
++      "lease_until": null,
++      "run_started_at": null,
++      "result": null,
++      "error": null,
++      "receipt": null,
++      "reserved_credits": 0
++    }
++  },
++  "operator_before_microusdc": "39000",
++  "operator_after_microusdc": "41000",
++  "vectors": 2,
++  "dimensions": 384,
++  "operator_wallet_access_rejected": true,
++  "operator_cross_worker_pause_rejected": true,
++  "unassigned_job_access_rejected": true,
++  "repeat_payment_refresh_no_duplicate_payout": true,
++  "main_wallet_configuration_and_identity_unchanged": true,
++  "completed_at": "2026-10-17T17:58:09.422Z"
++}
 diff --git a/docs/network/soapbox-main-app-validation.json b/docs/network/soapbox-main-app-validation.json
 new file mode 100644
 index 0000000..52a75a3
@@ -1337,10 +2015,10 @@ index 0000000..ff5f287
 +}
 diff --git a/docs/network/soapbox.md b/docs/network/soapbox.md
 new file mode 100644
-index 0000000..ece5caa
+index 0000000..eb71c3f
 --- /dev/null
 +++ b/docs/network/soapbox.md
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,250 @@
 +---
 +summary: "Connect Bitterbot to the standalone Soapbox trusted compute pilot"
 +read_when:
@@ -1544,12 +2222,59 @@ index 0000000..ece5caa
 +`docs/PHASE-2-PAYMENT-VALIDATION.md` for transaction links, evidence and reproduction details.
 +For repeat validation, `SOAPBOX_TESTNET_REUSE_REPORT` can point to a previous testnet report;
 +the harness rechecks the escrow code, token and settlement signer before reusing it.
++
++## Setup from the desktop app
++
++In an updated Bitterbot desktop app, open **Compute → Set up buyer or operator**.
++The bundled extension registers setup without starting a coordinator or worker. Setup requires
++an authenticated `operator.admin` session. Existing pilot/participant configurations remain
++read-only in the wizard; set up the tester's own gateway instead.
++
++### Buyer
++
++1. Select **Buyer** and create the separate Base Sepolia test wallet. Use the gateway's existing
++   CDP authentication or enter the three CDP credentials in the password fields. New credentials
++   are stored with owner-only permissions under the Compute test-wallet directory, never in
++   the main wallet config, browser storage, enrollment file, or worker environment.
++2. Give the public test-wallet address to the coordinator owner. Import their buyer enrollment
++   JSON. The gateway checks the coordinator's role, identity and payment address, and requires
++   the enrollment address to match this local test wallet.
++3. Review the coordinator, participant and address, acknowledge, then select **Activate buyer**.
++   The gateway saves a private configuration backup and reconnects with the new participant.
++4. Obtain Base Sepolia test USDC and ETH for gas. Submit a job in Compute and review its quote
++   before funding. Caps remain 0.10 test USDC per job and 1 test USDC per day.
++
++### GPU operator
++
++1. Select **GPU operator** and import the operator enrollment provided by the coordinator owner.
++   Its payment address is the operator's Base Sepolia payout address; signing keys are unnecessary.
++2. Download the linked runtime archive from the private Soapbox release using a GitHub account
++   with repository access, then select it in **GPU runtime archive**. The gateway accepts only
++   the exact size and SHA-256 of the approved release, before extraction or execution.
++3. Watch setup check Docker/NVIDIA, build the pinned image, download the approved embedding
++   model, and verify GPU execution in isolation. The gateway must run on Ubuntu x64 or WSL2,
++   with Docker/NVIDIA support, swap limits and at least 3 GB of free disk space already available.
++4. Review the payout address and allow approved paid jobs with a 1 GiB memory allowance.
++   Select **Activate operator**. After reconnection, use **Pause new work** to stop accepting jobs.
++
++The initial GUI operator setup enables paid test jobs only. Private-pool and collective-project
++memberships still require coordinator enrollment and explicit worker configuration. The wizard
++never grants membership, creates an admin token, changes the mainnet wallet, or funds a job.
++Runtime preparation can take several minutes. Closing the panel leaves preparation running;
++reopen it to see progress. An interrupted upload can be restarted by selecting the archive again.
++Activation keeps all other gateway settings and retains a private `bitterbot.before.json` backup
++beside `connection.json`. Existing configured gateways cannot be overwritten through this wizard.
++
++The `soapbox.setup.*` RPC family is admin-only, including status. Runtime upload uses bounded,
++ordered chunks; token/signing secrets are absent from status responses and child-process output.
++On gateway shutdown, preparation is interrupted and its model-download container is removed.
++The independent two-machine test remains a separate acceptance step when a tester is available.
 diff --git a/extensions/soapbox-compute/bitterbot.plugin.json b/extensions/soapbox-compute/bitterbot.plugin.json
 new file mode 100644
-index 0000000..6cc2ae2
+index 0000000..70eba2a
 --- /dev/null
 +++ b/extensions/soapbox-compute/bitterbot.plugin.json
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,16 @@
 +{
 +  "id": "soapbox-compute",
 +  "name": "Soapbox Compute",
@@ -1559,26 +2284,28 @@ index 0000000..6cc2ae2
 +    "type": "object",
 +    "additionalProperties": false,
 +    "properties": {
-+      "mode": { "type": "string", "enum": ["pilot", "participant"] },
++      "mode": { "type": "string", "enum": ["setup", "pilot", "participant"] },
 +      "binary": { "type": "string", "minLength": 1 },
 +      "repository": { "type": "string", "minLength": 1 },
 +      "stateDirectory": { "type": "string", "minLength": 1 }
-+    },
-+    "required": ["stateDirectory"]
++    }
 +  }
 +}
 diff --git a/extensions/soapbox-compute/index.ts b/extensions/soapbox-compute/index.ts
 new file mode 100644
-index 0000000..047f642
+index 0000000..715cd9c
 --- /dev/null
 +++ b/extensions/soapbox-compute/index.ts
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,112 @@
 +import type { BitterbotPluginApi } from "bitterbot/plugin-sdk";
 +import { spawn, type ChildProcess } from "node:child_process";
 +import { closeSync, openSync, readFileSync } from "node:fs";
 +import { homedir } from "node:os";
 +import path from "node:path";
++import { resolveStateDir, resolveConfigPath } from "../../src/config/paths.js";
++import { createSoapboxSetupHandlers } from "../../src/gateway/server-methods/soapbox-setup.js";
 +import { createSoapboxHandlers } from "../../src/gateway/server-methods/soapbox.js";
++import { SoapboxSetup } from "../../src/services/soapbox-setup.js";
 +import { registerParticipant } from "./participant.js";
 +
 +export default {
@@ -1586,6 +2313,27 @@ index 0000000..047f642
 +  register(api: BitterbotPluginApi) {
 +    const repository = api.pluginConfig?.repository;
 +    const directory = api.pluginConfig?.stateDirectory;
++    const setupOnly =
++      api.pluginConfig?.mode === "setup" || (!api.pluginConfig?.mode && !repository);
++    const setup = new SoapboxSetup({
++      root: path.join(resolveStateDir(), "compute/setup"),
++      configPath: resolveConfigPath(),
++      mainWallet: api.config.tools?.wallet,
++      configuredRole: setupOnly
++        ? undefined
++        : api.pluginConfig?.mode === "participant"
++          ? "participant"
++          : "pilot",
++    });
++    for (const [name, handler] of Object.entries(createSoapboxSetupHandlers(setup)))
++      api.registerGatewayMethod(name, handler);
++    api.registerService({ id: "soapbox-setup", start() {}, stop: () => setup.runtime.stop() });
++    if (setupOnly) {
++      api.registerGatewayMethod("soapbox.status", ({ respond }) =>
++        respond(true, { enabled: false }),
++      );
++      return;
++    }
 +    if (api.pluginConfig?.mode === "participant") {
 +      if (typeof directory !== "string" || !path.isAbsolute(directory))
 +        throw new Error("Absolute stateDirectory required");
@@ -1765,10 +2513,10 @@ index 0000000..7bbe7f0
 +}
 diff --git a/scripts/build-soapbox-integration.mjs b/scripts/build-soapbox-integration.mjs
 new file mode 100644
-index 0000000..365c389
+index 0000000..5ab23e5
 --- /dev/null
 +++ b/scripts/build-soapbox-integration.mjs
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,131 @@
 +import { build } from "esbuild";
 +/** Build a gateway plugin and an additive UI overlay against the installed release source. */
 +import assert from "node:assert/strict";
@@ -1857,6 +2605,10 @@ index 0000000..365c389
 +await cp(
 +  path.join(root, "src/infra/soapbox-client.ts"),
 +  path.join(stage, "src/infra/soapbox-client.ts"),
++);
++await cp(
++  path.join(root, "src/infra/soapbox-setup-types.ts"),
++  path.join(stage, "src/infra/soapbox-setup-types.ts"),
 +);
 +const patch = async (file, from, to) => {
 +  const target = path.join(stage, file);
@@ -3616,13 +4368,20 @@ index 0000000..f00dd8c
 +await mkdir(path.dirname(output), { recursive: true });
 +await writeFile(output, JSON.stringify(accounts, null, 2), { mode: 0o600 });
 diff --git a/src/gateway/server-methods-list.ts b/src/gateway/server-methods-list.ts
-index 1729b25..779fab8 100644
+index 1729b25..750c8ba 100644
 --- a/src/gateway/server-methods-list.ts
 +++ b/src/gateway/server-methods-list.ts
-@@ -1,6 +1,17 @@
+@@ -1,6 +1,24 @@
  import { listChannelPlugins } from "../channels/plugins/index.js";
  
  const BASE_METHODS = [
++  "soapbox.setup.status",
++  "soapbox.setup.wallet",
++  "soapbox.setup.import",
++  "soapbox.setup.runtime.begin",
++  "soapbox.setup.runtime.chunk",
++  "soapbox.setup.runtime.prepare",
++  "soapbox.setup.activate",
 +  "soapbox.status",
 +  "soapbox.wallet",
 +  "soapbox.payment.fund",
@@ -3673,7 +4432,7 @@ index 0000000..05e6d79
 +  });
 +});
 diff --git a/src/gateway/server-methods.ts b/src/gateway/server-methods.ts
-index 550efc4..645a268 100644
+index 550efc4..808125f 100644
 --- a/src/gateway/server-methods.ts
 +++ b/src/gateway/server-methods.ts
 @@ -27,6 +27,7 @@ import { projectsHandlers } from "./server-methods/projects.js";
@@ -3684,9 +4443,12 @@ index 550efc4..645a268 100644
  import { systemHandlers } from "./server-methods/system.js";
  import { talkHandlers } from "./server-methods/talk.js";
  import { ttsHandlers } from "./server-methods/tts.js";
-@@ -65,6 +66,11 @@ const PAIRING_METHODS = new Set([
+@@ -63,8 +64,13 @@ const PAIRING_METHODS = new Set([
+   "device.token.revoke",
+   "node.rename",
  ]);
- const ADMIN_METHOD_PREFIXES = ["exec.approvals."];
+-const ADMIN_METHOD_PREFIXES = ["exec.approvals."];
++const ADMIN_METHOD_PREFIXES = ["exec.approvals.", "soapbox.setup."];
  const READ_METHODS = new Set([
 +  "soapbox.wallet",
 +  "soapbox.status",
@@ -3716,6 +4478,74 @@ index 550efc4..645a268 100644
    ...connectHandlers,
    ...logsHandlers,
    ...voicewakeHandlers,
+diff --git a/src/gateway/server-methods/soapbox-setup.ts b/src/gateway/server-methods/soapbox-setup.ts
+new file mode 100644
+index 0000000..5095303
+--- /dev/null
++++ b/src/gateway/server-methods/soapbox-setup.ts
+@@ -0,0 +1,62 @@
++import type { SoapboxSetup } from "../../services/soapbox-setup.js";
++import type { GatewayRequestHandlers } from "./types.js";
++import { ErrorCodes, errorShape } from "../protocol/index.js";
++
++/** Setup changes local configuration and provisions credentials: all endpoints require admin. */
++export function createSoapboxSetupHandlers(setup: SoapboxSetup): GatewayRequestHandlers {
++  const actions: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
++    status: () => setup.status(),
++    wallet: (p) => setup.wallet(p.credentials),
++    import: async (p) => {
++      await setup.import(p.enrollment, p.role);
++      return setup.status();
++    },
++    "runtime.begin": async () => {
++      setup.requireOperator();
++      return setup.runtime.begin();
++    },
++    "runtime.chunk": async (p) => {
++      setup.requireOperator();
++      return setup.runtime.chunk(p.id, p.offset, p.data);
++    },
++    "runtime.prepare": async (p) => {
++      setup.requireOperator();
++      await setup.runtime.prepare(p.id);
++      return setup.status();
++    },
++    activate: () => setup.activate(),
++  };
++  return Object.fromEntries(
++    Object.entries(actions).map(([action, run]) => [
++      `soapbox.setup.${action}`,
++      async ({ client, params, respond }) => {
++        if (
++          client?.connect.role !== "operator" ||
++          !client.connect.scopes?.includes("operator.admin")
++        ) {
++          respond(
++            false,
++            undefined,
++            errorShape(ErrorCodes.INVALID_REQUEST, "Compute setup requires operator.admin"),
++          );
++          return;
++        }
++        try {
++          respond(
++            true,
++            await (action === "status" ? run(params) : setup.mutate(() => run(params))),
++          );
++        } catch (error) {
++          respond(
++            false,
++            undefined,
++            errorShape(
++              ErrorCodes.INVALID_REQUEST,
++              error instanceof Error ? error.message : "Compute setup failed",
++            ),
++          );
++        }
++      },
++    ]),
++  );
++}
 diff --git a/src/gateway/server-methods/soapbox.test.ts b/src/gateway/server-methods/soapbox.test.ts
 new file mode 100644
 index 0000000..51d169e
@@ -4514,6 +5344,45 @@ index 0000000..040d0dd
 +  }
 +  return stop;
 +}
+diff --git a/src/infra/soapbox-setup-types.ts b/src/infra/soapbox-setup-types.ts
+new file mode 100644
+index 0000000..7e161a7
+--- /dev/null
++++ b/src/infra/soapbox-setup-types.ts
+@@ -0,0 +1,20 @@
++export type SoapboxSetupStatus = {
++  configured: boolean;
++  configuredRole?: string;
++  platformSupported: boolean;
++  hasWalletCredentials: boolean;
++  walletAddress: string | null;
++  release: { url: string; filename: string; bytes: number };
++  enrollment?: {
++    role: "buyer" | "operator";
++    id: string;
++    url: string;
++    address: string;
++    chain_id: 84532;
++  };
++  progress: {
++    state: "idle" | "uploading" | "preparing" | "ready" | "failed";
++    message: string;
++    percent: number;
++  };
++};
+diff --git a/src/plugins/config-state.ts b/src/plugins/config-state.ts
+index e596d6c..2743d90 100644
+--- a/src/plugins/config-state.ts
++++ b/src/plugins/config-state.ts
+@@ -30,6 +30,8 @@ export const BUNDLED_ENABLED_BY_DEFAULT = new Set<string>([
+   "discord",
+   "slack",
+   "signal",
++  // Registers local onboarding only until the owner activates an enrollment.
++  "soapbox-compute",
+ ]);
+ 
+ const normalizeList = (value: unknown): string[] => {
 diff --git a/src/services/soapbox-payment.test.ts b/src/services/soapbox-payment.test.ts
 new file mode 100644
 index 0000000..d05ad7d
@@ -4676,6 +5545,755 @@ index 0000000..91048ed
 +  if (funded.status !== "success") throw new Error("Escrow funding reverted");
 +  return { status: "funded", txHash };
 +}
+diff --git a/src/services/soapbox-setup-runtime.test.ts b/src/services/soapbox-setup-runtime.test.ts
+new file mode 100644
+index 0000000..fc01eaf
+--- /dev/null
++++ b/src/services/soapbox-setup-runtime.test.ts
+@@ -0,0 +1,49 @@
++import { mkdtemp, rm, open } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import path from "node:path";
++import { expect, it, vi } from "vitest";
++import {
++  SOAPBOX_SETUP_RELEASE,
++  SoapboxSetupRuntime,
++  prepareSoapboxGpuLock,
++} from "./soapbox-setup-runtime.js";
++
++it("allows the runtime to acquire its lock on a fresh operator profile without a wallet", async () => {
++  const home = await mkdtemp(path.join(tmpdir(), "soapbox-fresh-operator-"));
++  try {
++    const lock = await prepareSoapboxGpuLock(home);
++    const file = await open(lock, "wx", 0o600);
++    await file.close();
++    expect(await prepareSoapboxGpuLock(home)).toBe(lock);
++  } finally {
++    await rm(home, { recursive: true, force: true });
++  }
++});
++
++it.skipIf(process.platform !== "linux" || process.arch !== "x64")(
++  "rejects out-of-order and oversized chunks and never executes a modified archive",
++  async () => {
++    const directory = await mkdtemp(path.join(tmpdir(), "soapbox-upload-test-"));
++    const run = vi.fn();
++    const runtime = new SoapboxSetupRuntime(directory, run);
++    try {
++      const { id } = await runtime.begin();
++      await expect(runtime.chunk(id, 1, "YQ==")).rejects.toThrow("chunk");
++      await expect(runtime.chunk(id, 0, Buffer.alloc(262145).toString("base64"))).rejects.toThrow(
++        "size",
++      );
++      await expect(runtime.chunk("different-id", 0, "YQ==")).rejects.toThrow("expired");
++      await expect(runtime.prepare(id)).rejects.toThrow("Complete");
++      for (let offset = 0; offset < SOAPBOX_SETUP_RELEASE.bytes; ) {
++        const bytes = Buffer.alloc(Math.min(262144, SOAPBOX_SETUP_RELEASE.bytes - offset));
++        offset = (await runtime.chunk(id, offset, bytes.toString("base64"))).offset;
++      }
++      await expect(runtime.prepare(id)).rejects.toThrow("checksum");
++      expect(run).not.toHaveBeenCalled();
++      expect(runtime.progress.state).toBe("failed");
++    } finally {
++      await runtime.stop();
++      await rm(directory, { recursive: true, force: true });
++    }
++  },
++);
+diff --git a/src/services/soapbox-setup-runtime.ts b/src/services/soapbox-setup-runtime.ts
+new file mode 100644
+index 0000000..375f5a2
+--- /dev/null
++++ b/src/services/soapbox-setup-runtime.ts
+@@ -0,0 +1,281 @@
++import { spawn } from "node:child_process";
++import { createHash, randomUUID } from "node:crypto";
++import { existsSync } from "node:fs";
++import {
++  appendFile,
++  chmod,
++  copyFile,
++  mkdir,
++  readFile,
++  rm,
++  statfs,
++  writeFile,
++} from "node:fs/promises";
++import { homedir } from "node:os";
++import path from "node:path";
++import type { SoapboxSetupStatus } from "../infra/soapbox-setup-types.js";
++import { soapboxOperatorEnvironment } from "../infra/soapbox-connection.js";
++
++export const SOAPBOX_SETUP_RELEASE = {
++  url: "https://github.com/Bitterbot-AI/soapbox/releases/tag/v0.3.0-rc.1",
++  filename: "soapbox-0.3.0-rc.1-linux-x64.tar.gz",
++  bytes: 15824317,
++  sha256: "03c4c2de8e42032c6710ce0b4f1170d893c2a36b26a0ad88398173cd16ff9588",
++};
++
++/** Fresh operator profiles do not have the wallet-created shared runtime directory. */
++export async function prepareSoapboxGpuLock(home = homedir()): Promise<string> {
++  const directory = path.join(home, ".bitterbot-soapbox");
++  await mkdir(directory, { recursive: true, mode: 0o700 });
++  return path.join(directory, "gpu.lock");
++}
++
++/** Fixed executables/arguments only. Never forward child output or gateway credentials to the UI. */
++export function runSetupCommand(
++  command: string,
++  args: string[],
++  signal?: AbortSignal,
++  timeout = 180000,
++): Promise<string> {
++  return new Promise((resolve, reject) => {
++    const child = spawn(command, args, {
++      env: soapboxOperatorEnvironment("", process.env),
++      stdio: ["ignore", "pipe", "pipe"],
++      signal,
++    });
++    let output = "";
++    child.stdout.on("data", (data: Buffer) => {
++      output = (output + data.toString()).slice(-262144);
++    });
++    child.stderr.resume();
++    const timer = setTimeout(() => {
++      child.kill("SIGKILL");
++    }, timeout);
++    child.once("error", () => {
++      clearTimeout(timer);
++      reject(new Error("Setup command unavailable or interrupted"));
++    });
++    child.once("close", (code) => {
++      clearTimeout(timer);
++      if (code === 0 && !signal?.aborted) resolve(output.trim());
++      else reject(new Error("Setup command failed or timed out"));
++    });
++  });
++}
++
++export class SoapboxSetupRuntime {
++  progress: SoapboxSetupStatus["progress"] = {
++    state: "idle",
++    message: "Import an enrollment to begin.",
++    percent: 0,
++  };
++  ready?: { binary: string; worker: string };
++  private upload?: { id: string; directory: string; offset: number; expires: number };
++  private controller?: AbortController;
++  private task?: Promise<void>;
++  constructor(
++    private root: string,
++    private run = runSetupCommand,
++  ) {}
++
++  async begin(): Promise<{ id: string; offset: number }> {
++    if (process.platform !== "linux" || process.arch !== "x64")
++      throw new Error("GPU operators require an Ubuntu x64 gateway (WSL2 supported)");
++    if (this.progress.state === "preparing")
++      throw new Error("Runtime preparation is already running");
++    if (this.upload) await rm(this.upload.directory, { recursive: true, force: true });
++    const id = randomUUID(),
++      directory = path.join(this.root, id);
++    await mkdir(directory, { recursive: true, mode: 0o700 });
++    const space = await statfs(directory);
++    if (space.bavail * space.bsize < 3 * 1024 ** 3)
++      throw new Error("At least 3 GB of free disk space is required");
++    this.ready = undefined;
++    this.upload = { id, directory, offset: 0, expires: Date.now() + 600000 };
++    this.progress = { state: "uploading", message: "Receiving approved runtime", percent: 0 };
++    return { id, offset: 0 };
++  }
++
++  async chunk(id: unknown, offset: unknown, data: unknown): Promise<{ offset: number }> {
++    const upload = this.upload;
++    if (
++      !upload ||
++      upload.id !== id ||
++      this.progress.state !== "uploading" ||
++      upload.expires < Date.now()
++    )
++      throw new Error("Runtime upload expired; select the file again");
++    if (
++      offset !== upload.offset ||
++      typeof data !== "string" ||
++      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data) ||
++      data.length > 349528
++    )
++      throw new Error("Invalid runtime chunk");
++    const bytes = Buffer.from(data, "base64");
++    if (
++      !bytes.length ||
++      bytes.length > 262144 ||
++      bytes.toString("base64") !== data ||
++      upload.offset + bytes.length > SOAPBOX_SETUP_RELEASE.bytes
++    )
++      throw new Error("Invalid runtime size");
++    await appendFile(path.join(upload.directory, "runtime.tar.gz"), bytes, { mode: 0o600 });
++    upload.offset += bytes.length;
++    this.progress.percent = Math.floor((upload.offset / SOAPBOX_SETUP_RELEASE.bytes) * 100);
++    return { offset: upload.offset };
++  }
++
++  async prepare(id: unknown): Promise<void> {
++    const upload = this.upload;
++    if (
++      !upload ||
++      upload.id !== id ||
++      upload.offset !== SOAPBOX_SETUP_RELEASE.bytes ||
++      this.progress.state !== "uploading"
++    )
++      throw new Error("Complete the runtime upload first");
++    const archive = path.join(upload.directory, "runtime.tar.gz");
++    if (
++      createHash("sha256")
++        .update(await readFile(archive))
++        .digest("hex") !== SOAPBOX_SETUP_RELEASE.sha256
++    ) {
++      this.progress = {
++        state: "failed",
++        message: "Runtime checksum did not match the approved release. Download it again.",
++        percent: 0,
++      };
++      await rm(upload.directory, { recursive: true, force: true });
++      throw new Error(this.progress.message);
++    }
++    this.controller = new AbortController();
++    this.progress = { state: "preparing", message: "Checking Docker and NVIDIA GPU", percent: 5 };
++    this.task = this.build(upload.directory, this.controller.signal).catch(() => {
++      this.progress = {
++        ...this.progress,
++        state: "failed",
++        message: `${this.progress.message} failed. Check Docker, NVIDIA drivers and internet access, then retry.`,
++      };
++    });
++  }
++
++  private async build(directory: string, signal: AbortSignal): Promise<void> {
++    const run = (cmd: string, args: string[], timeout?: number) =>
++      this.run(cmd, args, signal, timeout);
++    if ((await run("docker", ["info", "--format", "{{.SwapLimit}}"], 30000)) !== "true")
++      throw new Error("Docker must enforce swap limits");
++    await run(
++      existsSync("/usr/lib/wsl/lib/nvidia-smi") ? "/usr/lib/wsl/lib/nvidia-smi" : "nvidia-smi",
++      ["--query-gpu=name", "--format=csv,noheader"],
++      30000,
++    );
++    await run("tar", ["-xzf", path.join(directory, "runtime.tar.gz"), "-C", directory]);
++    const released = path.join(directory, "soapbox-0.3.0-rc.1-linux-x64");
++    const build = path.join(directory, "image"),
++      models = path.join(directory, "models");
++    if (/[\n,]/.test(models)) throw new Error("Unsupported runtime directory");
++    await mkdir(build);
++    await mkdir(models);
++    const binary = path.join(released, "bin/soapbox");
++    await chmod(binary, 0o700);
++    await copyFile(binary, path.join(build, "soapbox"));
++    await copyFile(path.join(released, "containers/Dockerfile"), path.join(build, "Dockerfile"));
++    this.progress = {
++      state: "preparing",
++      message: "Building the isolated GPU runtime",
++      percent: 25,
++    };
++    const tag = `soapbox-setup:${path.basename(directory)}`;
++    await run(
++      "docker",
++      ["buildx", "build", "--builder", "default", "--load", "--tag", tag, build],
++      900000,
++    );
++    const image = await run("docker", ["image", "inspect", tag, "--format", "{{.Id}}"]);
++    if (!/^sha256:[a-f0-9]{64}$/.test(image)) throw new Error("Invalid runtime image");
++    this.progress = {
++      state: "preparing",
++      message: "Downloading the approved embedding model",
++      percent: 55,
++    };
++    const name = `soapbox-setup-${path.basename(directory)}`;
++    try {
++      await run("docker", [
++        "run",
++        "-d",
++        "--name",
++        name,
++        "--user",
++        `${process.getuid!()}:${process.getgid!()}`,
++        "--cap-drop=ALL",
++        "--security-opt=no-new-privileges:true",
++        "--memory=2g",
++        "--memory-swap=2g",
++        "--pids-limit=128",
++        "--env",
++        "OLLAMA_MODELS=/models",
++        "--env",
++        "OLLAMA_NO_CLOUD=1",
++        "--mount",
++        `type=bind,source=${models},target=/models`,
++        "--entrypoint=/bin/ollama",
++        image,
++        "serve",
++      ]);
++      let ready = false;
++      for (let i = 0; i < 30 && !signal.aborted; i++) {
++        try {
++          await run("docker", ["exec", name, "/bin/ollama", "list"], 5000);
++          ready = true;
++          break;
++        } catch {
++          await new Promise((resolve) => setTimeout(resolve, 1000));
++        }
++      }
++      if (!ready) throw new Error("Model runtime did not start");
++      await run("docker", ["exec", name, "/bin/ollama", "pull", "all-minilm:latest"], 600000);
++    } finally {
++      await this.run("docker", ["rm", "-f", name], undefined, 30000).catch(() => {});
++    }
++    this.progress = {
++      state: "preparing",
++      message: "Verifying GPU execution and isolation",
++      percent: 85,
++    };
++    const worker = path.join(directory, "worker.json");
++    await writeFile(
++      worker,
++      JSON.stringify({
++        modes: ["paid"],
++        pools: [],
++        projects: [],
++        memory_mib: 1024,
++        ollama_model: "all-minilm:latest",
++        ollama_digest: "1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef",
++        max_gpu_temperature_c: 80,
++        max_gpu_utilization_pct: 40,
++        min_gpu_free_mib: 256,
++        pause_file: path.join(directory, "PAUSE"),
++        min_price_credits: 1,
++        allow_unsafe_host: false,
++        sandbox: { image, models, gpu_lock: await prepareSoapboxGpuLock() },
++      }),
++      { mode: 0o600 },
++    );
++    const probe = JSON.parse(await run(binary, ["inspect", "--config", worker]));
++    if (!probe.gpu_observed || probe.isolation !== "docker_v1")
++      throw new Error("GPU runtime is not ready");
++    this.ready = { binary, worker };
++    this.progress = {
++      state: "ready",
++      message: "GPU runtime verified. Review your enrollment and activate.",
++      percent: 100,
++    };
++  }
++
++  async stop(): Promise<void> {
++    this.controller?.abort();
++    await this.task;
++  }
++}
+diff --git a/src/services/soapbox-setup.test.ts b/src/services/soapbox-setup.test.ts
+new file mode 100644
+index 0000000..21ee9c9
+--- /dev/null
++++ b/src/services/soapbox-setup.test.ts
+@@ -0,0 +1,141 @@
++import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import path from "node:path";
++import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
++import type { GatewayRequestHandlerOptions } from "../gateway/server-methods/types.js";
++import { createSoapboxSetupHandlers } from "../gateway/server-methods/soapbox-setup.js";
++import { SoapboxClient, type SoapboxStatus } from "../infra/soapbox-client.js";
++import { SoapboxSetup } from "./soapbox-setup.js";
++
++const address = `0x${"1".repeat(40)}`;
++vi.mock("./soapbox-wallet.js", () => ({
++  soapboxWalletIdentity: async () => `0x${"1".repeat(40)}`,
++  soapboxWalletAuthentication: async () => ({
++    apiKeyId: "private-id",
++    apiKeySecret: "private-key",
++    walletSecret: "private-secret",
++  }),
++  initializeSoapboxWallet: vi.fn(async () => `0x${"1".repeat(40)}`),
++}));
++const connection = {
++  version: 1,
++  role: "buyer",
++  id: "tester",
++  url: "http://127.0.0.1:8787",
++  token: "c".repeat(64),
++  address,
++  chain_id: 84532,
++  escrow: `0x${"2".repeat(40)}`,
++  escrow_code_sha256: "a".repeat(64),
++  rpc_url: "https://sepolia.base.org",
++};
++let directory: string;
++let configPath: string;
++let setup: SoapboxSetup;
++let coordinatorStatus: MockInstance<SoapboxClient["status"]>;
++beforeEach(async () => {
++  directory = await mkdtemp(path.join(tmpdir(), "soapbox-gui-test-"));
++  configPath = path.join(directory, "bitterbot.json");
++  await writeFile(
++    configPath,
++    JSON.stringify({
++      tools: { wallet: { enabled: true, network: "base", walletStorePath: "/main-wallet" } },
++      channels: { telegram: { enabled: true } },
++    }),
++  );
++  setup = new SoapboxSetup({ root: directory, configPath });
++  coordinatorStatus = vi.spyOn(SoapboxClient.prototype, "status").mockResolvedValue({
++    principal: { id: "tester", roles: ["submitter"] },
++    payment_account: { chain_id: 84532, address },
++  } as SoapboxStatus);
++});
++afterEach(async () => {
++  vi.restoreAllMocks();
++  await rm(directory, { recursive: true, force: true });
++});
++describe("Compute onboarding", () => {
++  it("activates a verified buyer while preserving main wallet and channel settings", async () => {
++    const before = JSON.parse(await readFile(configPath, "utf8"));
++    await setup.import({ ...connection, extra: "must-not-persist" }, "buyer");
++    const status = await setup.status();
++    expect(JSON.stringify(status)).not.toMatch(/private-secret|private-key|cccccccc/);
++    await setup.activate();
++    const config = JSON.parse(await readFile(configPath, "utf8"));
++    expect(config.tools).toEqual(before.tools);
++    expect(config.channels).toEqual(before.channels);
++    const state = config.plugins.entries["soapbox-compute"].config.stateDirectory;
++    expect(JSON.parse(await readFile(path.join(state, "connection.json"), "utf8"))).toEqual(
++      connection,
++    );
++    expect(JSON.parse(await readFile(path.join(state, "bitterbot.before.json"), "utf8"))).toEqual(
++      before,
++    );
++    await expect(setup.mutate(() => setup.wallet(undefined))).rejects.toThrow("already has");
++  });
++  it("rejects mainnet, mismatched buyer wallets, wrong roles, and admin enrollments", async () => {
++    await expect(setup.import({ ...connection, chain_id: 8453 }, "buyer")).rejects.toThrow(
++      "Base Sepolia",
++    );
++    await expect(setup.import(connection, "operator")).rejects.toThrow("other role");
++    coordinatorStatus.mockResolvedValue({
++      principal: { id: "tester", roles: ["submitter", "admin"] },
++      payment_account: { chain_id: 84532, address },
++    } as SoapboxStatus);
++    await expect(setup.import(connection, "buyer")).rejects.toThrow("verification failed");
++    const other = `0x${"3".repeat(40)}`;
++    coordinatorStatus.mockResolvedValue({
++      principal: { id: "tester", roles: ["submitter"] },
++      payment_account: { chain_id: 84532, address: other },
++    } as SoapboxStatus);
++    await expect(setup.import({ ...connection, address: other }, "buyer")).rejects.toThrow(
++      "test wallet",
++    );
++  });
++  it("does not activate operators before runtime verification or let them create buyer wallets", async () => {
++    coordinatorStatus.mockResolvedValue({
++      principal: { id: "tester", roles: ["worker"] },
++      payment_account: { chain_id: 84532, address },
++    } as SoapboxStatus);
++    await setup.import({ ...connection, role: "operator" }, "operator");
++    await expect(setup.activate()).rejects.toThrow("GPU runtime");
++    await expect(setup.wallet(undefined)).rejects.toThrow("Operators");
++  });
++  it("preserves an existing pilot and rejects changes made by another setup", async () => {
++    const active = new SoapboxSetup({ root: directory, configPath, configuredRole: "pilot" });
++    await expect(active.mutate(() => active.import(connection, "buyer"))).rejects.toThrow(
++      "already has",
++    );
++    await setup.import(connection, "buyer");
++    await writeFile(
++      configPath,
++      JSON.stringify({
++        plugins: { entries: { "soapbox-compute": { config: { mode: "pilot" } } } },
++      }),
++    );
++    await expect(setup.activate()).rejects.toThrow("configured elsewhere");
++  });
++  it("requires an authenticated admin for every setup endpoint including reads", async () => {
++    for (const handler of Object.values(createSoapboxSetupHandlers(setup))) {
++      for (const client of [
++        null,
++        { connect: { role: "node", scopes: ["operator.admin"] } },
++        { connect: { role: "operator", scopes: ["operator.write", "operator.read"] } },
++      ]) {
++        const respond = vi.fn();
++        await handler({ client, respond, params: {} } as GatewayRequestHandlerOptions);
++        expect(respond).toHaveBeenCalledWith(
++          false,
++          undefined,
++          expect.objectContaining({ message: "Compute setup requires operator.admin" }),
++        );
++      }
++    }
++    const respond = vi.fn();
++    await createSoapboxSetupHandlers(setup)["soapbox.setup.status"]({
++      client: { connect: { role: "operator", scopes: ["operator.admin"] } },
++      respond,
++      params: {},
++    } as GatewayRequestHandlerOptions);
++    expect(respond).toHaveBeenCalledWith(true, expect.objectContaining({ configured: false }));
++  });
++});
+diff --git a/src/services/soapbox-setup.ts b/src/services/soapbox-setup.ts
+new file mode 100644
+index 0000000..edeed85
+--- /dev/null
++++ b/src/services/soapbox-setup.ts
+@@ -0,0 +1,184 @@
++import JSON5 from "json5";
++import { randomUUID } from "node:crypto";
++import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
++import path from "node:path";
++import type { BitterbotConfig } from "../config/types.js";
++import type { WalletConfig } from "../config/types.wallet.js";
++import type { SoapboxSetupStatus } from "../infra/soapbox-setup-types.js";
++import { SoapboxClient } from "../infra/soapbox-client.js";
++import {
++  parseSoapboxConnection,
++  verifySoapboxConnection,
++  type SoapboxConnection,
++} from "../infra/soapbox-connection.js";
++import { SOAPBOX_SETUP_RELEASE, SoapboxSetupRuntime } from "./soapbox-setup-runtime.js";
++import {
++  initializeSoapboxWallet,
++  soapboxWalletAuthentication,
++  soapboxWalletIdentity,
++  type SoapboxWalletAuthentication,
++} from "./soapbox-wallet.js";
++
++export class SoapboxSetup {
++  readonly runtime: SoapboxSetupRuntime;
++  private enrollment?: SoapboxConnection;
++  private busy = false;
++  private activated = false;
++  constructor(
++    private options: {
++      root: string;
++      configPath: string;
++      mainWallet?: WalletConfig;
++      configuredRole?: string;
++    },
++  ) {
++    this.runtime = new SoapboxSetupRuntime(path.join(options.root, "runtime"));
++  }
++
++  async status(): Promise<SoapboxSetupStatus> {
++    const c = this.enrollment;
++    const auth = await soapboxWalletAuthentication(this.options.mainWallet);
++    return {
++      configured: Boolean(this.options.configuredRole || this.activated),
++      configuredRole: this.options.configuredRole ?? (this.activated ? c?.role : undefined),
++      platformSupported: process.platform === "linux" && process.arch === "x64",
++      hasWalletCredentials: Boolean(auth.apiKeyId && auth.apiKeySecret && auth.walletSecret),
++      walletAddress: await soapboxWalletIdentity(),
++      release: {
++        url: SOAPBOX_SETUP_RELEASE.url,
++        filename: SOAPBOX_SETUP_RELEASE.filename,
++        bytes: SOAPBOX_SETUP_RELEASE.bytes,
++      },
++      enrollment: c && { role: c.role, id: c.id, url: c.url, address: c.address, chain_id: 84532 },
++      progress: this.runtime.progress,
++    };
++  }
++
++  async mutate<T>(action: () => Promise<T>): Promise<T> {
++    if (this.busy) throw new Error("Another setup action is in progress");
++    if (this.options.configuredRole || this.activated)
++      throw new Error("This gateway already has a Compute setup");
++    this.busy = true;
++    try {
++      return await action();
++    } finally {
++      this.busy = false;
++    }
++  }
++
++  async wallet(value: unknown): Promise<{ address: string }> {
++    if (this.enrollment?.role === "operator")
++      throw new Error("Operators do not need a buyer wallet");
++    if (
++      value !== undefined &&
++      (typeof value !== "object" || value === null || Array.isArray(value))
++    )
++      throw new Error("Invalid wallet credentials");
++    try {
++      return {
++        address: await initializeSoapboxWallet(
++          this.options.mainWallet,
++          value as SoapboxWalletAuthentication | undefined,
++        ),
++      };
++    } catch {
++      throw new Error(
++        "Could not initialize the test wallet. Check all three CDP credentials and internet access. Existing wallet identity must match.",
++      );
++    }
++  }
++
++  async import(value: unknown, role: unknown): Promise<void> {
++    if (this.runtime.progress.state === "preparing")
++      throw new Error("Wait for runtime preparation to finish");
++    const parsed = parseSoapboxConnection(value);
++    if (parsed.role !== role) throw new Error("The enrollment belongs to the other role");
++    // Persist only schema fields; never accept extra configuration from the enrollment file.
++    const c: SoapboxConnection = {
++      version: 1,
++      role: parsed.role,
++      id: parsed.id,
++      url: parsed.url,
++      token: parsed.token,
++      address: parsed.address,
++      chain_id: 84532,
++      escrow: parsed.escrow,
++      escrow_code_sha256: parsed.escrow_code_sha256,
++      rpc_url: parsed.rpc_url,
++    };
++    try {
++      verifySoapboxConnection(c, await new SoapboxClient(c.url, c.token).status());
++    } catch {
++      throw new Error(
++        "Enrollment verification failed. Check that the coordinator is reachable and the role, identity and Base Sepolia address match.",
++      );
++    }
++    if (
++      c.role === "buyer" &&
++      (await soapboxWalletIdentity())?.toLowerCase() !== c.address.toLowerCase()
++    )
++      throw new Error(
++        "Enrollment address must match your separate Compute test wallet. Create the wallet first, then request an enrollment for that address.",
++      );
++    this.enrollment = c;
++  }
++
++  requireOperator(): void {
++    if (this.enrollment?.role !== "operator")
++      throw new Error("Verify an operator enrollment first");
++  }
++
++  async activate(): Promise<{ activated: true }> {
++    const c = this.enrollment;
++    if (!c) throw new Error("Import an enrollment first");
++    verifySoapboxConnection(c, await new SoapboxClient(c.url, c.token).status());
++    if (
++      c.role === "buyer" &&
++      (await soapboxWalletIdentity())?.toLowerCase() !== c.address.toLowerCase()
++    )
++      throw new Error("Buyer wallet identity changed; import enrollment again");
++    if (c.role === "operator" && !this.runtime.ready)
++      throw new Error("Prepare and verify the GPU runtime first");
++    const original = await readFile(this.options.configPath, "utf8");
++    const config = JSON5.parse(original) as BitterbotConfig;
++    if (
++      !config ||
++      typeof config !== "object" ||
++      Array.isArray(config) ||
++      /"\$include"\s*:/.test(JSON.stringify(config))
++    )
++      throw new Error(
++        "This gateway uses externally managed configuration; automatic setup is unavailable",
++      );
++    const existing = config.plugins?.entries?.["soapbox-compute"]?.config;
++    if (
++      existing &&
++      (existing.mode === "participant" || existing.mode === "pilot" || existing.repository)
++    )
++      throw new Error("Compute was configured elsewhere; refresh before continuing");
++    const directory = path.join(this.options.root, `participant-${randomUUID()}`);
++    await mkdir(directory, { recursive: true, mode: 0o700 });
++    await writeFile(path.join(directory, "connection.json"), JSON.stringify(c), { mode: 0o600 });
++    if (c.role === "operator")
++      await copyFile(this.runtime.ready!.worker, path.join(directory, "worker.json"));
++    config.plugins ??= {};
++    config.plugins.entries ??= {};
++    config.plugins.entries["soapbox-compute"] = {
++      enabled: true,
++      config: {
++        mode: "participant",
++        stateDirectory: directory,
++        ...(c.role === "operator" ? { binary: this.runtime.ready!.binary } : {}),
++      },
++    };
++    const backup = path.join(directory, "bitterbot.before.json");
++    await writeFile(backup, original, { mode: 0o600 });
++    const temporary = `${this.options.configPath}.soapbox-${randomUUID()}.tmp`;
++    await writeFile(temporary, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
++    if ((await readFile(this.options.configPath, "utf8")) !== original)
++      throw new Error("Gateway settings changed during setup; try activation again");
++    await rename(temporary, this.options.configPath);
++    this.activated = true;
++    return { activated: true };
++  }
++}
+diff --git a/src/services/soapbox-wallet-onboarding.test.ts b/src/services/soapbox-wallet-onboarding.test.ts
+new file mode 100644
+index 0000000..b69c297
+--- /dev/null
++++ b/src/services/soapbox-wallet-onboarding.test.ts
+@@ -0,0 +1,64 @@
++import { mkdtemp, readFile, rm } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import path from "node:path";
++import { afterEach, expect, it, vi } from "vitest";
++
++let directory: string | undefined;
++afterEach(async () => {
++  vi.resetModules();
++  vi.doUnmock("node:os");
++  vi.doUnmock("@coinbase/cdp-sdk");
++  vi.doUnmock("./wallet-service.js");
++  if (directory) await rm(directory, { recursive: true, force: true });
++});
++
++it("stores GUI credentials only in the Compute test wallet and passes them explicitly to signing", async () => {
++  directory = await mkdtemp(path.join(tmpdir(), "soapbox-wallet-onboarding-"));
++  vi.doMock("node:os", () => ({ homedir: () => directory }));
++  const address = `0x${"1".repeat(40)}`;
++  const account = vi.fn(async () => ({ address }));
++  const construct = vi.fn();
++  vi.doMock("@coinbase/cdp-sdk", () => ({
++    CdpClient: class {
++      evm = { getOrCreateAccount: account };
++      constructor(auth: unknown) {
++        construct(auth);
++      }
++    },
++  }));
++  const create = vi.fn(() => ({}));
++  vi.doMock("./wallet-service.js", () => ({ createWalletService: create }));
++  const { initializeSoapboxWallet, createSoapboxWallet, soapboxWalletDirectory } =
++    await import("./soapbox-wallet.js");
++  const auth = { apiKeyId: "test-id", apiKeySecret: "test-key", walletSecret: "test-secret" };
++  const main = {
++    enabled: true,
++    network: "base" as const,
++    walletStorePath: path.join(directory, "mainnet"),
++  };
++  const envSecret = process.env.CDP_WALLET_SECRET;
++  expect(await initializeSoapboxWallet(main, auth)).toBe(address);
++  expect(account).toHaveBeenCalledWith({ name: "bitterbot-owner-base-sepolia" });
++  expect(
++    JSON.parse(await readFile(path.join(soapboxWalletDirectory, "credentials.json"), "utf8")),
++  ).toEqual(auth);
++  await createSoapboxWallet(main);
++  expect(create).toHaveBeenLastCalledWith(
++    expect.objectContaining({
++      network: "base-sepolia",
++      walletStorePath: soapboxWalletDirectory,
++      cdpApiKeyId: "test-id",
++      cdpApiKeySecret: "test-key",
++    }),
++    expect.objectContaining({ walletSecret: "test-secret" }),
++  );
++  expect(process.env.CDP_WALLET_SECRET).toBe(envSecret);
++  expect(main.network).toBe("base");
++  account.mockResolvedValue({ address: `0x${"2".repeat(40)}` });
++  await expect(initializeSoapboxWallet(main, { ...auth, apiKeyId: "wrong-id" })).rejects.toThrow(
++    "different test wallet",
++  );
++  expect(
++    JSON.parse(await readFile(path.join(soapboxWalletDirectory, "credentials.json"), "utf8")),
++  ).toEqual(auth);
++});
 diff --git a/src/services/soapbox-wallet.test.ts b/src/services/soapbox-wallet.test.ts
 new file mode 100644
 index 0000000..adb8418
@@ -4717,11 +6335,11 @@ index 0000000..adb8418
 +});
 diff --git a/src/services/soapbox-wallet.ts b/src/services/soapbox-wallet.ts
 new file mode 100644
-index 0000000..6fda258
+index 0000000..806062b
 --- /dev/null
 +++ b/src/services/soapbox-wallet.ts
-@@ -0,0 +1,80 @@
-+import { mkdir, readFile, realpath } from "node:fs/promises";
+@@ -0,0 +1,162 @@
++import { mkdir, readFile, realpath, writeFile, rename } from "node:fs/promises";
 +import { homedir } from "node:os";
 +import path from "node:path";
 +import { createPublicClient, formatUnits, http, parseAbi } from "viem";
@@ -4759,7 +6377,89 @@ index 0000000..6fda258
 +  });
 +  if ((await realpath(soapboxWalletDirectory)) === mainResolved)
 +    throw new Error("Compute and main wallet stores must be separate");
-+  return createWalletService(soapboxWalletConfig(mainWallet));
++  const auth = await soapboxWalletAuthentication(mainWallet);
++  return createWalletService(
++    {
++      ...soapboxWalletConfig(mainWallet),
++      cdpApiKeyId: auth.apiKeyId,
++      cdpApiKeySecret: auth.apiKeySecret,
++    },
++    {
++      walletSecret: auth.walletSecret,
++      rpcUrl: process.env.BITTERBOT_SOAPBOX_RPC_URL ?? "https://sepolia.base.org",
++    },
++  );
++}
++
++export type SoapboxWalletAuthentication = {
++  apiKeyId: string;
++  apiKeySecret: string;
++  walletSecret: string;
++};
++const credentialsFile = path.join(soapboxWalletDirectory, "credentials.json");
++
++export async function soapboxWalletAuthentication(
++  mainWallet?: WalletConfig,
++): Promise<SoapboxWalletAuthentication> {
++  try {
++    return JSON.parse(await readFile(credentialsFile, "utf8"));
++  } catch (error) {
++    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
++  }
++  return {
++    apiKeyId: mainWallet?.cdpApiKeyId ?? process.env.CDP_API_KEY_ID ?? "",
++    apiKeySecret: mainWallet?.cdpApiKeySecret ?? process.env.CDP_API_KEY_SECRET ?? "",
++    walletSecret: process.env.CDP_WALLET_SECRET ?? "",
++  };
++}
++
++export async function soapboxWalletIdentity(): Promise<string | null> {
++  try {
++    const stored = JSON.parse(
++      await readFile(path.join(soapboxWalletDirectory, "wallet-data.json"), "utf8"),
++    );
++    if (stored.name !== "bitterbot-owner-base-sepolia" || !/^0x[\da-f]{40}$/i.test(stored.address))
++      throw new Error("Invalid Compute test wallet identity");
++    return stored.address;
++  } catch (error) {
++    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
++    throw error;
++  }
++}
++
++/** Provision the test account without loading AgentKit or changing the main wallet/env. */
++export async function initializeSoapboxWallet(
++  mainWallet?: WalletConfig,
++  supplied?: SoapboxWalletAuthentication,
++): Promise<string> {
++  const auth = supplied ?? (await soapboxWalletAuthentication(mainWallet));
++  if (
++    Object.values(auth).length !== 3 ||
++    ![auth.apiKeyId, auth.apiKeySecret, auth.walletSecret].every(
++      (value) => typeof value === "string" && value.length > 0 && value.length <= 16384,
++    )
++  )
++    throw new Error("Enter all three CDP credentials for the test wallet");
++  const existing = await soapboxWalletIdentity();
++  const { CdpClient } = await import("@coinbase/cdp-sdk");
++  const account = await new CdpClient(auth).evm.getOrCreateAccount({
++    name: "bitterbot-owner-base-sepolia",
++  });
++  if (existing && existing.toLowerCase() !== account.address.toLowerCase())
++    throw new Error("These credentials belong to a different test wallet");
++  // Also enforce separation from a user-configured main-wallet store before writing.
++  await createSoapboxWallet(mainWallet);
++  const save = async (file: string, value: unknown) => {
++    await writeFile(`${file}.tmp`, JSON.stringify(value), { mode: 0o600 });
++    await rename(`${file}.tmp`, file);
++  };
++  if (supplied) await save(credentialsFile, auth);
++  await save(path.join(soapboxWalletDirectory, "wallet-data.json"), {
++    name: "bitterbot-owner-base-sepolia",
++    address: account.address,
++    ownerAddress: account.address,
++  });
++  return account.address;
 +}
 +
 +export async function getSoapboxWalletStatus(): Promise<SoapboxWalletStatus> {
@@ -4906,7 +6606,7 @@ index 0000000..36faac7
 +  });
 +});
 diff --git a/src/services/wallet-service.ts b/src/services/wallet-service.ts
-index cd815a5..16a3c20 100644
+index cd815a5..1e1b514 100644
 --- a/src/services/wallet-service.ts
 +++ b/src/services/wallet-service.ts
 @@ -39,6 +39,9 @@ export type X402PaymentResult = {
@@ -4919,7 +6619,38 @@ index cd815a5..16a3c20 100644
    getAddress(): Promise<string>;
    getBalance(token?: string): Promise<BalanceResult>;
    sendUsdc(to: string, amount: number, opts?: SendUsdcOptions): Promise<SendResult>;
-@@ -233,9 +236,11 @@ export function createWalletService(config: WalletConfig): WalletService {
+@@ -99,7 +102,10 @@ const ERC20_BALANCE_ABI = [
+   },
+ ] as const;
+ 
+-export function createWalletService(config: WalletConfig): WalletService {
++export function createWalletService(
++  config: WalletConfig,
++  authentication?: { walletSecret: string; rpcUrl?: string },
++): WalletService {
+   const network = config.network ?? "base-sepolia";
+   // AgentKit's CDP wallet providers expect CDP network IDs ("base-mainnet",
+   // "base-sepolia"), NOT the short "base" alias we use everywhere else for
+@@ -144,7 +150,7 @@ export function createWalletService(config: WalletConfig): WalletService {
+ 
+     const apiKeyId = config.cdpApiKeyId ?? process.env.CDP_API_KEY_ID;
+     const apiKeySecret = config.cdpApiKeySecret ?? process.env.CDP_API_KEY_SECRET;
+-    const walletSecret = process.env.CDP_WALLET_SECRET;
++    const walletSecret = authentication?.walletSecret ?? process.env.CDP_WALLET_SECRET;
+     if (!apiKeyId || !apiKeySecret || !walletSecret) {
+       throw new Error(
+         "Missing required CDP credentials. Set CDP_API_KEY_ID, CDP_API_KEY_SECRET, " +
+@@ -161,7 +167,8 @@ export function createWalletService(config: WalletConfig): WalletService {
+     const provider = await CdpEvmWalletProvider.configureWithWallet({
+       apiKeyId,
+       apiKeySecret,
+-      // walletSecret falls through to process.env.CDP_WALLET_SECRET.
++      walletSecret,
++      rpcUrl: authentication?.rpcUrl,
+       networkId,
+       address: account.address as `0x${string}`,
+     });
+@@ -233,9 +240,11 @@ export function createWalletService(config: WalletConfig): WalletService {
          history = JSON.parse(await fs.readFile(historyPath, "utf-8"));
        } catch {}
        history.push(record);
@@ -4934,7 +6665,7 @@ index cd815a5..16a3c20 100644
        await fs.writeFile(historyPath, JSON.stringify(history, null, 2), "utf-8");
      } finally {
        await release();
-@@ -257,6 +262,65 @@ export function createWalletService(config: WalletConfig): WalletService {
+@@ -257,6 +266,65 @@ export function createWalletService(config: WalletConfig): WalletService {
    }
  
    return {
@@ -4946,7 +6677,7 @@ index cd815a5..16a3c20 100644
 +      const { CdpClient } = await import("@coinbase/cdp-sdk");
 +      const apiKeyId = config.cdpApiKeyId ?? process.env.CDP_API_KEY_ID;
 +      const apiKeySecret = config.cdpApiKeySecret ?? process.env.CDP_API_KEY_SECRET;
-+      const walletSecret = process.env.CDP_WALLET_SECRET;
++      const walletSecret = authentication?.walletSecret ?? process.env.CDP_WALLET_SECRET;
 +      if (!apiKeyId || !apiKeySecret || !walletSecret)
 +        throw new Error("Missing required CDP credentials");
 +      const cdp = new CdpClient({ apiKeyId, apiKeySecret, walletSecret });

@@ -25,7 +25,7 @@ const exec = promisify(execFile);
 export const sha = (b) => createHash("sha256").update(b).digest("hex");
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const within = (root, file) => path.resolve(file).startsWith(path.resolve(root) + path.sep);
-export const runtimeName = "soapbox-0.3.0-rc.1-linux-x64.tar.gz";
+export const runtimeName = "soapbox-runtime-0.3.0-rc.3-linux-x64.tar.gz";
 export const runtimeHash = "03c4c2de8e42032c6710ce0b4f1170d893c2a36b26a0ad88398173cd16ff9588";
 export async function verifyRelease(release) {
   const meta = await readJson(path.join(release, "release.json"));

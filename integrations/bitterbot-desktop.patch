@@ -627,10 +627,10 @@ index 00000000..93207325
 +}
 diff --git a/desktop/renderer/src/components/compute/ComputeView.test.tsx b/desktop/renderer/src/components/compute/ComputeView.test.tsx
 new file mode 100644
-index 00000000..2bfc5e12
+index 00000000..f7b69ca4
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/ComputeView.test.tsx
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,233 @@
 +import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 +import { afterEach, describe, expect, it, vi } from "vitest";
 +import { ComputeView } from "./ComputeView";
@@ -738,8 +738,11 @@ index 00000000..2bfc5e12
 +    await waitFor(() =>
 +      expect(fake.request).toHaveBeenCalledWith(
 +        "soapbox.payment.fund",
-+        { id: "paid-job" },
-+        { timeoutMs: 600000 },
++        {
++          id: "paid-job",
++          approval: expect.objectContaining({ chain_id: 84532, amount_microusdc: 2000 }),
++        },
++        { timeoutMs: 180000 },
 +      ),
 +    );
 +  });
@@ -863,7 +866,7 @@ index 00000000..2bfc5e12
 +});
 diff --git a/desktop/renderer/src/components/compute/ComputeView.tsx b/desktop/renderer/src/components/compute/ComputeView.tsx
 new file mode 100644
-index 00000000..b9f02133
+index 00000000..5da811b4
 --- /dev/null
 +++ b/desktop/renderer/src/components/compute/ComputeView.tsx
 @@ -0,0 +1,549 @@
@@ -1380,8 +1383,8 @@ index 00000000..b9f02133
 +                  void run(async () => {
 +                    const response = await request<{ job: SoapboxJob }>(
 +                      "soapbox.payment.fund",
-+                      { id: selected.id },
-+                      { timeoutMs: 600000 },
++                      { id: selected.id, approval: selected.payment },
++                      { timeoutMs: 180000 },
 +                    );
 +                    setSelected(response.job);
 +                    await refresh();
@@ -1834,10 +1837,10 @@ index 00000000..b2b899ff
 +}
 diff --git a/docs/network/soapbox-main-app-validation.json b/docs/network/soapbox-main-app-validation.json
 new file mode 100644
-index 00000000..52a75a3a
+index 00000000..52f1214e
 --- /dev/null
 +++ b/docs/network/soapbox-main-app-validation.json
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,34 @@
 +{
 +  "validated_at": "2026-10-17T14:47:27.9964316Z",
 +  "app_version": "1.7.0",
@@ -1864,20 +1867,13 @@ index 00000000..52a75a3a
 +    "buyer_balance_before_usdc": "0.965",
 +    "buyer_balance_after_usdc": "0.963"
 +  },
-+  "main_wallet": {
-+    "network": "base",
-+    "address": "0x1593294B7FCECEBD1Cc85091cCc5B18Cb478d2b9",
-+    "configuration_unchanged": true,
-+    "identity_file_sha256_unchanged": true,
-+    "displayed_usdc_before": "8.99",
-+    "displayed_usdc_after": "8.99"
-+  },
 +  "checks": {
 +    "focused_backend_tests": 13,
 +    "release_ui_tests": 6,
 +    "typescript": "passed",
 +    "installed_gateway_plugin_preflight": "loaded; no diagnostics"
-+  }
++  },
++  "main_wallet_details": "Omitted; preservation was verified without distributing account identity or balance."
 +}
 diff --git a/docs/network/soapbox-release-validation.json b/docs/network/soapbox-release-validation.json
 new file mode 100644
@@ -2093,284 +2089,141 @@ index 00000000..ff5f2878
 +}
 diff --git a/docs/network/soapbox.md b/docs/network/soapbox.md
 new file mode 100644
-index 00000000..d57cde61
+index 00000000..dd3913b9
 --- /dev/null
 +++ b/docs/network/soapbox.md
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,121 @@
 +---
-+summary: "Connect Bitterbot to the standalone Soapbox trusted compute pilot"
++summary: "Install and use the private Soapbox Compute pilot"
 +read_when:
-+  - Configuring shared CPU/GPU workloads or the Compute view
++  - Setting up a Compute buyer or GPU operator
 +title: "Soapbox Compute"
 +---
 +
 +# Soapbox Compute
 +
-+Soapbox is an independent Rust service for paid, private and collective compute pools.
-+The desktop integration is **Compute** in the main sidebar and is disabled by default.
++Compute is enabled by default and appears in the main sidebar. Setup, worker
++activation and payments require deliberate user actions. Soapbox runs approved CPU
++hashing and GPU embedding workloads on explicitly admitted operators. Payments use
++Base Sepolia test USDC. Mainnet settlement is disabled.
 +
-+Version 0.2 supports isolated CPU SHA-256 batches, real GPU embeddings through a digest-pinned
-+Ollama model, persistent job accounting, and temporary account-scoped artifacts. Paid jobs can
-+use Base Sepolia USDC escrow when configured; legacy coordinators use non-redeemable test credits.
-+This release is a trusted compute pilot. Mainnet settlement and commercial storage remain future work.
++## Install the private test release
 +
-+## Compute in the main desktop app
++Download the Windows/WSL ZIP or Linux archive from the private
++[Soapbox release](https://github.com/Bitterbot-AI/soapbox/releases/tag/v0.3.0-rc.3).
++Extract the entire archive, then open **Soapbox-Setup.exe** on Windows or
++**Soapbox-Setup** on Ubuntu. Choose Buyer or GPU operator and run the prerequisite
++checks. Acknowledge the installation, install the wizard and follow the Open
++Bitterbot link. Restart Bitterbot normally if it does not reconnect automatically.
 +
-+Open the normal app at `http://127.0.0.1:19001` and select **Compute**. The local
-+`soapbox-compute` plugin runs the coordinator, isolated worker and settlement relayer.
-+There is no second gateway or testnet window. The main Wallet continues to use its existing
-+network, account and spending history. Compute uses the separate Base Sepolia account
-+`bitterbot-owner-base-sepolia`, with its ledger in `~/.bitterbot-soapbox/wallet/base-sepolia`.
-+Its balance and full address appear at the top of Compute. It never uses the main wallet's
-+`RPC_URL`, `NETWORK_ID`, network setting, ledger or spend limits.
++The add-on supports Bitterbot 1.8.0 on Ubuntu 24.04 x64 or WSL2 Ubuntu 24.04.
++Windows uses the default WSL distribution. Bitterbot supplies Node 22 or newer.
++Buyers need 256 MiB free disk. Operators need at least 4 GiB, an NVIDIA GPU, working
++Docker/NVIDIA Container Toolkit, cgroup v2 and enforced swap limits. The installer
++checks these prerequisites; it does not install drivers or change Docker permissions.
++This unsigned private preview includes a version-specific Control UI overlay.
 +
-+Select **Paid · test USDC** and **GPU embeddings**, and submit
-+one or more lines of text. Review the quote, then select **Fund … test USDC**. The result
-+changes to **succeeded** only after the operator's payment is confirmed on Base Sepolia.
-+The rate is 0.001 test USDC per line. The dedicated test wallet has a 0.1 test USDC
-+per-transaction cap and a 1 test USDC rolling daily cap.
++## Buyer
 +
-+Jobs, credentials, accounting and logs persist in WSL at `~/.bitterbot-soapbox-pilot`.
-+The plugin uses the reviewed escrow and separate test accounts from the completed pilot.
-+Closing the UI leaves the worker and relayer running; gateway shutdown stops its children.
-+Use **Pause** in the operator panel to stop accepting new work. Docker and the NVIDIA runtime
-+must be running in WSL; after a host reboot start the container engine before testing.
-+The Linux worker binary is installed at the sibling repository's `.local/bin/soapbox-linux`.
-+Normal chat, channels and Compute share the main gateway. The old PowerShell pilot shortcut
-+opens the main app after integration has been activated.
++Open **Compute → Set up buyer or operator**, choose Buyer and initialize a separate
++test wallet. Supply your own CDP authentication or use the gateway's configured CDP
++authentication. Give only the displayed public address to the coordinator owner.
++Import the scoped buyer enrollment they provide, review it and activate.
 +
-+### Build and install against an existing release
++Obtain Base Sepolia test USDC and test ETH for gas. Submit an approved workload,
++review the returned quote and click Fund for that exact job. Limits remain 0.10
++USDC per job and 1 USDC over a rolling day. Changed quotes require another review.
++Funding and payment refresh require an admin connection. A timeout retains the
++spend reservation; refresh the payment state before retrying.
 +
-+The working checkout and installed release may differ. Build the additive UI against source
-+matching the installed version, preserving its newer views. The installer checks that version
-+and never replaces the installed gateway binary or edits the main wallet configuration.
++New accounts use `bitterbot-compute-base-sepolia`. Main/Compute address collisions
++and unexpected CDP identity changes are rejected before activation or funding.
++Existing legacy test accounts retain their identities and funds while the main
++wallet remains on Base; legacy accounts are blocked if the main wallet uses Base
++Sepolia. Do not delete a wallet identity file to resolve a conflict. An intentional
++migration needs a new Compute account, a new enrollment and separate handling of
++remaining test funds. This installer does not migrate funds or identities.
 +
-+```sh
-+node scripts/build-soapbox-integration.mjs /home/vicmg/bitterbot-desktop
-+node scripts/install-soapbox-main.mjs prepare
-+BITTERBOT_CONFIG_PATH="$HOME/.bitterbot/compute/prepared.json" bitterbot plugins list
-+node scripts/install-soapbox-main.mjs activate
-+```
++The release pins the approved escrow address and deployed bytecode hash in
++`src/infra/soapbox-payment-policy.ts`. Enrollment cannot substitute another contract
++and may specify only the public Base Sepolia RPC endpoint. The explicit-click
++private pilot approval gate is separate from the newer desktop main's AP2 mandate
++integration, which remains required before general agent-initiated payments.
 +
-+Activation stops the old pilot, migrates only its test-wallet identity and ledger, and writes
-+the plugin/UI configuration atomically. The gateway config watcher restarts the app.
-+Versioned assets and `before-config.json` are retained under `~/.bitterbot/compute/release-*`.
-+To roll back, restore that configuration and restart the gateway; existing jobs and test funds
-+remain in their state stores. The plugin uses native CommonJS packaging so the extension
-+loader does not transpile the bundled wallet SDK at startup.
++## GPU operator
 +
-+If an existing gateway shutdown hook times out before respawn, relaunch the installed
-+app normally; `scripts/soapbox-main-gateway.sh` provides the same local WSL recovery path.
++Choose GPU operator and import the scoped operator enrollment from the coordinator.
++Review the Base Sepolia payout address. No buyer wallet or signing key is needed.
++Click **Prepare GPU runtime**. The bundled, checksum-pinned runtime builds its fixed
++container image, downloads the approved model and verifies isolated GPU execution.
++Acknowledge the resource allowance, then activate. Use **Pause new work** to stop
++new allocations. The GUI enables approved paid test jobs; private/collective pool
++membership still requires coordinator authorization.
 +
-+The integrated main app was verified on 2026-10-17: job
-+`d253cbe2-1433-4462-98ac-5c6936f362bf` produced two 384-dimensional vectors on the RTX 4080
-+and paid the operator [0.002 test USDC](https://sepolia.basescan.org/tx/0x829f8341b96709acf82ebb4091c520a7f8c8729f385efd55928a4b8c4dee3320).
-+The mainnet wallet configuration and identity file were unchanged, and its UI balance
-+remained $8.99. See [main app validation evidence](soapbox-main-app-validation.json).
++## What is stored
 +
-+The desktop form was exercised on 2026-10-16 (Toronto): job
-+`6731f66e-e1d1-4e3d-9e3a-c8c3803568ba` produced two 384-dimensional vectors on the RTX 4080
-+and reached **succeeded** on its first attempt after funding through the UI.
-+The [0.002 test USDC payout](https://sepolia.basescan.org/tx/0xf1ae180706ba158ac67544ad53ef16bba1340a8e28fbe4538789d5e5f9c13d8e)
-+was independently confirmed, increasing the operator balance from 0.033 to 0.035 test USDC.
-+See [UI validation evidence](soapbox-ui-validation.json). During periodic model warmup,
-+the worker may briefly appear offline; wait for **Online** and **GPU probe passed** before submission.
++- Installer deployments, rollback journals and private config backups live under
++  the gateway state directory's `compute/` folder.
++- Participant enrollment, worker configuration and runtime/model data live under
++  `compute/setup/`. Enrollment contains a scoped API token, never a wallet key.
++- The Compute wallet uses `~/.bitterbot-soapbox/wallet/base-sepolia/` with its own
++  identity, transaction history and `funding-approvals.jsonl` review records.
++- Supplied CDP credentials are stored in a private 0600 file. OS-backed secret
++  storage is future work. Protect the local user account and disk accordingly.
 +
-+## Connect an existing coordinator
++## Rollback
 +
-+Set these in the gateway process environment and restart the gateway:
++Reopen the installer, acknowledge **Restore the previous Compute setup and keep my
++wallet data**, then click **Roll back this installation**. Finish or cancel and
++settle visible pending jobs first. The coordinator must be reachable to check an
++activated participant. Conflicting Compute changes block automatic rollback.
 +
-+```sh
-+BITTERBOT_SOAPBOX_ENABLED=1
-+BITTERBOT_SOAPBOX_URL=http://127.0.0.1:8787
-+BITTERBOT_SOAPBOX_TOKEN=<provisioned-submitters-token>
-+```
++Rollback restores the configuration fields owned by that installation and keeps
++unrelated later edits. Wallet files, history, models and backups are retained. It
++does not uninstall Docker or delete user data. Restart Bitterbot if necessary.
 +
-+The service token must have at least 32 characters. Provision a unique credential in the
-+Soapbox coordinator; keep it out of the renderer, localStorage, build variables and Git.
-+Remote coordinators require HTTPS. Clients refuse redirects and credential-bearing URLs.
++## Gateway permissions and lifecycle
 +
-+The gateway credential identifies one Soapbox account. This integration is for trusted
-+gateway operators; it does not delegate separate Soapbox identities to individual chat users.
-+Pool and project memberships come from the coordinator's ACL. Circle membership alone
-+does not grant compute access in this release.
++The `soapbox-compute` plugin is the sole registrar for Compute gateway methods and
++owns participant clients and worker service lifetimes. The old core env-based
++Soapbox service is no longer started by the gateway.
 +
-+## Optional gateway-managed processes
++| Methods                                                                                   | Required scope                           |
++| ----------------------------------------------------------------------------------------- | ---------------------------------------- |
++| `soapbox.status`, `soapbox.wallet`, `soapbox.jobs`, `soapbox.job`, `soapbox.artifact.get` | `operator.read` or stronger              |
++| `soapbox.submit`, `soapbox.cancel`, `soapbox.artifact.put`                                | `operator.write` or admin                |
++| `soapbox.worker.pause`, `soapbox.payment.fund`, `soapbox.payment.refresh`                 | `operator.admin`                         |
++| All `soapbox.setup.*` methods                                                             | `operator.admin`, including setup status |
 +
-+- `BITTERBOT_SOAPBOX_BINARY`: absolute native executable path.
-+- `BITTERBOT_SOAPBOX_CONFIG`: coordinator configuration; setting it opts into starting a coordinator.
-+- `BITTERBOT_SOAPBOX_DB`: required database path for that coordinator.
-+- `BITTERBOT_SOAPBOX_WORKER_CONFIG`: separate opt-in to contribute this machine as a worker.
-+- `SOAPBOX_WORKER_TOKEN`: worker credential. Other coordinator credentials must use a
-+  `SOAPBOX_` or `BITTERBOT_SOAPBOX_` environment-variable prefix so the managed process receives them.
++Operator enrollments cannot access the buyer wallet or submit buyer workloads.
++Wallet funding requires the reviewed quote at both the gateway and Compute-wallet
++boundary, then applies the spending caps before signing.
 +
-+A managed coordinator must use an HTTP `127.0.0.1` URL. Use absolute configuration/database paths.
-+The gateway only stops processes it launched. A Windows gateway requires a native Windows
-+binary; during WSL development, run the service externally and connect over loopback.
++## Networking and release limits
 +
-+## Operator workflow
++The temporary installer binds only to loopback and uses an expiring session token.
++Other machines need a coordinator with valid HTTPS or an agreed private tunnel;
++the installer does not open public ports or change firewalls. Setup pulls its fixed
++container base image and approved Ollama model. Buyer wallets contact CDP and the
++public Base Sepolia RPC. See the Soapbox release guide for administrator preparation.
 +
-+1. Start the coordinator and explicitly admitted workers.
-+2. Open Compute and verify online offers and account membership.
-+3. Select Private, Collective or Paid; paid jobs reserve the fixed test-credit quote.
-+4. Submit a CPU batch or choose a ready GPU embedding model. The desktop includes its exact digest.
-+5. Inspect the job result and acceptance receipt. Cancel queued/running work when needed.
-+6. An administrator can pause new allocations; existing work drains.
++This release is a trusted private pilot. GPU evidence is worker-reported; embeddings
++are checked for shape. Storage is temporary and coordinator-local. Signed CI
++releases, public enrollment, stronger hostile-operator isolation, relayer recovery,
++full AP2 integration and physical two-machine acceptance remain separate milestones.
 +
-+Temporary artifacts are UTF-8 text, owner-only, at most 1 MiB, with a configurable account
-+quota and expiry. They live on the coordinator and are not replicated or encrypted by Soapbox.
-+Do not use them as backups. GPU residency is observed, not attested. Embedding results are
-+checked for shape, while CPU hash results are independently recomputed.
-+
-+## Gateway permissions
-+
-+| RPC                                                             | Scope          |
-+| --------------------------------------------------------------- | -------------- |
-+| soapbox.status, soapbox.jobs, soapbox.job, soapbox.artifact.get | operator.read  |
-+| soapbox.submit, soapbox.cancel, soapbox.artifact.put            | operator.write |
-+| soapbox.payment.fund, soapbox.payment.refresh                   | operator.write |
-+| soapbox.worker.pause                                            | operator.admin |
-+
-+All service requests originate in the gateway. The browser never receives the token or
-+an arbitrary URL proxy. The standalone service independently checks roles and membership.
-+
-+## Local source and plan
-+
-+The standalone checkout is `D:\Bitterbot\soapbox`; the legacy Java reference is `D:\Soapbox`.
-+Read the standalone README, `docs/ARCHITECTURE.md`, `docs/MVP-PLAN.md`, and `docs/RUNBOOK.md`
-+for the demo, deployment instructions and production acceptance gates. No Java files are modified.
-+
-+## GPU pilot
-+
-+On this development machine, the native binary, model and renderer are built. From the
-+repository root, run `./scripts/soapbox-gpu-pilot.ps1` to start the isolated pilot and get
-+its desktop URL. `-TestOnly` runs the automated GPU checks and exits. The launcher starts
-+the dedicated runtime if necessary and stops only the runtime it started when finished.
-+
-+The first physically verified service is 384-dimensional `all-minilm:latest` embeddings on
-+Windows with an NVIDIA RTX 4080. In the Soapbox repository, run `scripts/setup-gpu.ps1` and
-+then `scripts/start-gpu-runtime.ps1`. Configure the gateway-managed worker using
-+`examples/worker-gpu.json`, with pool/project memberships matching the coordinator. The worker
-+warms the locally installed pinned model automatically; it never downloads buyer-selected models.
-+
-+The Compute view shows GPU temperature, utilization, free VRAM, model readiness and admission
-+diagnostics. GPU jobs require full model residency before and after execution. Inputs run in
-+ordered batches of up to 16, with a 100-second execution timeout. Selected job results refresh
-+automatically. Receipts include worker-reported model/runtime binding and duration measurements.
-+Model digest checks and full-residency observations are not hardware attestation or hard GPU limits.
-+
-+From this repository, with the native Soapbox binary and Ollama available:
-+
-+```powershell
-+$env:SOAPBOX_BINARY = 'D:\Bitterbot\soapbox\.local\bin\soapbox.exe'
-+node --import tsx scripts/soapbox-smoke.ts --gpu
-+```
-+
-+This runs real GPU work through an authenticated gateway WebSocket in all three modes,
-+compares results with direct inference, checks accounting/cancellation and stops its isolated
-+services. Add `--keep` to open the built desktop against that temporary pilot. It prints a local
-+URL and ends after one hour or Ctrl+C. Build `desktop/dist-renderer` first. No existing gateway
-+configuration is changed. A native Windows Node dependency installation is needed; the Soapbox
-+`docs/PHASE-2-GPU.md` records the local WSL-checkout accommodations used during validation.
-+
-+The broader customer rollout still requires signed receipts, multi-worker workload partitioning,
-+independent security review and SLA qualification. The isolation and payment increment follows.
-+
-+## Phase 2 isolation and USDC
-+
-+The current extension supports per-job Linux/WSL containers and Base Sepolia USDC escrow.
-+See the standalone repository's `docs/PHASE-2-ISOLATION-PAYMENTS.md` for setup and trust boundaries.
-+Run `scripts/soapbox-payment-smoke.ts --gpu` with `SOAPBOX_REPO`, `SOAPBOX_BINARY`, and
-+`SOAPBOX_SANDBOX_CONFIG` for gateway-to-GPU-to-escrow validation; add `--testnet` after
-+running `scripts/soapbox-testnet-provision.ts` to use Circle test USDC.
-+
-+Compute now separates submission from funding. The funding RPC retrieves the immutable quote
-+from Soapbox, checks the current Base Sepolia wallet, exact micro-USDC amount, operator-pinned
-+escrow address/bytecode, and wallet spending caps. Set `BITTERBOT_SOAPBOX_ESCROW`,
-+`BITTERBOT_SOAPBOX_ESCROW_CODE_SHA256`, and optionally `BITTERBOT_SOAPBOX_RPC_URL` on the
-+gateway. A separate relayer signs payouts; the coordinator checks confirmed on-chain state.
-+Private and collective jobs remain free. Mainnet funding is disabled for this pilot.
-+
-+The earlier sections describe the original development integration. Shared-host execution now
-+requires explicit `allow_unsafe_host: true`; it cannot accept USDC jobs. Managed child
-+processes receive only OS/runtime and Soapbox environment variables, excluding wallet keys.
-+
-+The funded RTX 4080 pilot paid the node operator 0.033 test USDC and verified refunds and
-+recovery without duplicate payout. See the standalone repository's
-+`docs/PHASE-2-PAYMENT-VALIDATION.md` for transaction links, evidence and reproduction details.
-+For repeat validation, `SOAPBOX_TESTNET_REUSE_REPORT` can point to a previous testnet report;
-+the harness rechecks the escrow code, token and settlement signer before reusing it.
-+
-+## Setup from the desktop app
-+
-+The private Soapbox **v0.3.0-rc.2** add-on installs the wizard into Bitterbot 1.8.0 on
-+Ubuntu 24.04 x64 / WSL2. Extract the release and open **Soapbox-Setup.exe** on Windows
-+(using the default WSL distribution) or **Soapbox-Setup** on Ubuntu. The local setup page
-+checks prerequisites, installs the integration and offers guarded rollback. Wallet files are
-+preserved. Restart Bitterbot normally if it does not reconnect automatically. This unsigned
-+test preview does not install Docker/drivers or change security settings.
-+
-+In an updated Bitterbot desktop app, open **Compute → Set up buyer or operator**.
-+The bundled extension registers setup without starting a coordinator or worker. Setup requires
-+an authenticated `operator.admin` session. Existing pilot/participant configurations remain
-+read-only in the wizard; set up the tester's own gateway instead.
-+
-+### Buyer
-+
-+1. Select **Buyer** and create the separate Base Sepolia test wallet. Use the gateway's existing
-+   CDP authentication or enter the three CDP credentials in the password fields. New credentials
-+   are stored with owner-only permissions under the Compute test-wallet directory, never in
-+   the main wallet config, browser storage, enrollment file, or worker environment.
-+2. Give the public test-wallet address to the coordinator owner. Import their buyer enrollment
-+   JSON. The gateway checks the coordinator's role, identity and payment address, and requires
-+   the enrollment address to match this local test wallet.
-+3. Review the coordinator, participant and address, acknowledge, then select **Activate buyer**.
-+   The gateway saves a private configuration backup and reconnects with the new participant.
-+4. Obtain Base Sepolia test USDC and ETH for gas. Submit a job in Compute and review its quote
-+   before funding. Caps remain 0.10 test USDC per job and 1 test USDC per day.
-+
-+### GPU operator
-+
-+1. Select **GPU operator** and import the operator enrollment provided by the coordinator owner.
-+   Its payment address is the operator's Base Sepolia payout address; signing keys are unnecessary.
-+2. Click **Prepare GPU runtime** when the installer has included the runtime. For earlier
-+   source integrations, download the linked archive and select it in **GPU runtime archive**.
-+   Both paths require the exact size and SHA-256 of the approved runtime before execution.
-+3. Watch setup check Docker/NVIDIA, build the pinned image, download the approved embedding
-+   model, and verify GPU execution in isolation. The gateway must run on Ubuntu x64 or WSL2,
-+   with Docker/NVIDIA support, swap limits and at least 3 GB of free disk space already available.
-+4. Review the payout address and allow approved paid jobs with a 1 GiB memory allowance.
-+   Select **Activate operator**. After reconnection, use **Pause new work** to stop accepting jobs.
-+
-+The initial GUI operator setup enables paid test jobs only. Private-pool and collective-project
-+memberships still require coordinator enrollment and explicit worker configuration. The wizard
-+never grants membership, creates an admin token, changes the mainnet wallet, or funds a job.
-+Runtime preparation can take several minutes. Closing the panel leaves preparation running;
-+reopen it to see progress. An interrupted upload can be restarted by selecting the archive again.
-+Activation keeps all other gateway settings and retains a private `bitterbot.before.json` backup
-+beside `connection.json`. Existing configured gateways cannot be overwritten through this wizard.
-+
-+The `soapbox.setup.*` RPC family is admin-only, including status. Runtime upload uses bounded,
-+ordered chunks; token/signing secrets are absent from status responses and child-process output.
-+On gateway shutdown, preparation is interrupted and its model-download container is removed.
-+The independent two-machine test remains a separate acceptance step when a tester is available.
-+
-+GUI validation used separate gateway profiles on one RTX 4080 host: buyer wallet creation and
-+activation, operator enrollment/upload/activation, and a paid isolated GPU job that transferred
-+0.002 Base Sepolia USDC to the operator. The buyer-only test enrollment was revoked afterward.
-+The evidence is in `soapbox-gui-validation.json`; 32 focused tests and the workspace TypeScript
-+check also passed. The immutable v0.3.0-rc.1 runtime remains the execution input; the rc2
-+installer packages it with the updated UI/plugin and prerequisite/rollback tools.
++See the [review disposition](https://github.com/Bitterbot-AI/soapbox/blob/main/docs/RC3-REVIEW-DISPOSITION.md)
++for the selected corrections and remaining work.
 diff --git a/extensions/soapbox-compute/bitterbot.plugin.json b/extensions/soapbox-compute/bitterbot.plugin.json
 new file mode 100644
-index 00000000..e86a5f8d
+index 00000000..9bfa47e2
 --- /dev/null
 +++ b/extensions/soapbox-compute/bitterbot.plugin.json
 @@ -0,0 +1,17 @@
 +{
 +  "id": "soapbox-compute",
 +  "name": "Soapbox Compute",
-+  "version": "0.3.0-rc.2",
++  "version": "0.3.0-rc.3",
 +  "description": "Isolated compute with a separate Base Sepolia wallet",
 +  "configSchema": {
 +    "type": "object",
@@ -2508,13 +2361,13 @@ index 00000000..51bfb930
 +};
 diff --git a/extensions/soapbox-compute/package.json b/extensions/soapbox-compute/package.json
 new file mode 100644
-index 00000000..fda30fbb
+index 00000000..90418f2b
 --- /dev/null
 +++ b/extensions/soapbox-compute/package.json
 @@ -0,0 +1,10 @@
 +{
 +  "name": "@bitterbot/soapbox-compute",
-+  "version": "0.3.0-rc.2",
++  "version": "0.3.0-rc.3",
 +  "type": "module",
 +  "bitterbot": {
 +    "extensions": [
@@ -2745,6 +2598,160 @@ index 00000000..5ab23e5e
 +  JSON.stringify({ version, release, stage, built_at: new Date().toISOString() }, null, 2),
 +);
 +console.log(`Compute integration built for Bitterbot ${version}: ${output}`);
+diff --git a/scripts/check-payment-paths.mjs b/scripts/check-payment-paths.mjs
+new file mode 100644
+index 00000000..cbea9954
+--- /dev/null
++++ b/scripts/check-payment-paths.mjs
+@@ -0,0 +1,105 @@
++#!/usr/bin/env node
++/**
++ * PLAN-47 Phase 0 (invariant I4): freeze the value-moving surface.
++ *
++ * Every code path that actually moves value must stay inside a known, small set
++ * of files, so that when the AP2 mandate layer (Phase 1) and the Policy Decision
++ * Record enforcement gate (Phase 4) land, routing *all* spend through the gate is
++ * mechanical and a new unguarded payment path cannot sneak in unnoticed. This is
++ * the same freeze-the-surface move PLAN-46 made for `chunks` writes
++ * (scripts/check-chunk-writes.mjs): establish the current legitimate callers as
++ * the allowlist; a NEW caller in any other file fails lint.
++ *
++ * Two value-moving patterns are enforced:
++ *   A. outbound USDC spend   — `.sendUsdc(` / `.payForResource(` method calls
++ *   B. onchain EIP-3009 pull — `functionName: "transferWithAuthorization"`
++ *
++ * When Phase 1/4 land, the allowlist SHRINKS to the gated wrapper — it does not
++ * grow. Adding a file here without routing it through the mandate/enforcement
++ * gate defeats I4; do that only with an explicit PLAN-47 note.
++ */
++import { readdirSync, readFileSync, statSync } from "node:fs";
++import { join } from "node:path";
++
++const ROOT = "src";
++
++// Pattern A: outbound spend method calls. The interface signature and the
++// `async sendUsdc(` definition in wallet-service.ts have no leading dot, so they
++// do not match; only actual `x.sendUsdc(...)` / `x.payForResource(...)` calls do.
++const SPEND_CALL_RE = /\.(sendUsdc|payForResource|fundSoapbox)\s*!?\s*\(/g;
++const SPEND_ALLOW = new Set([
++  "src/agents/tools/wallet-tool.ts", // the gated wallet tool (opt-in + session caps)
++  "src/services/a2a-client.ts", // A2A auto-pay for a 402-gated peer task
++  "src/services/wallet-service.ts", // the service itself (definition + internal use)
++  "src/gateway/server-methods/wallet.ts", // the wallet gateway RPC (pay_for_resource)
++  "src/gateway/server-methods/soapbox.ts", // authenticated admin and exact-quote review
++  "src/services/soapbox-wallet.ts", // Compute quote approval gate and decision record
++  "src/memory/manager.ts", // PLAN-8 revenue/bounty payout dispatch (markPaymentProcessed)
++  // Future: "src/payments/ap2/gate.ts" — the mandate+enforcement wrapper (Phase 1/4).
++]);
++
++// Pattern B: the onchain EIP-3009 capture. Matching the functionName string (not
++// bare mentions) avoids the doc-comment references in settlement.ts / bounty-funding.ts.
++const EIP3009_RE = /functionName:\s*["']transferWithAuthorization["']/g;
++const EIP3009_ALLOW = new Set([
++  "src/commerce/cdp-adapters.ts", // the sole EIP-3009 transferWithAuthorization submitter
++]);
++
++const RAW_CDP_SEND_RE = /\.evm\.sendTransaction\s*\(/g;
++const RAW_CDP_SEND_ALLOW = new Set(["src/services/wallet-service.ts"]);
++
++function walk(dir) {
++  const out = [];
++  for (const e of readdirSync(dir)) {
++    const p = join(dir, e);
++    const st = statSync(p);
++    if (st.isDirectory()) {
++      if (e === "node_modules" || e === "dist") continue;
++      out.push(...walk(p));
++    } else if (p.endsWith(".ts") && !p.endsWith(".test.ts")) {
++      out.push(p);
++    }
++  }
++  return out;
++}
++
++function lineOf(src, index) {
++  return src.slice(0, index).split("\n").length;
++}
++
++const violations = [];
++for (const file of walk(ROOT)) {
++  const norm = file.replaceAll("\\", "/");
++  const src = readFileSync(file, "utf-8");
++
++  if (!SPEND_ALLOW.has(norm)) {
++    for (const m of src.matchAll(SPEND_CALL_RE)) {
++      violations.push(
++        `${norm}:${lineOf(src, m.index)}  value-moving call ${m[0]} — route spend through the PLAN-47 mandate/enforcement gate`,
++      );
++    }
++  }
++  if (!EIP3009_ALLOW.has(norm)) {
++    for (const m of src.matchAll(EIP3009_RE)) {
++      violations.push(
++        `${norm}:${lineOf(src, m.index)}  onchain transferWithAuthorization outside cdp-adapters.ts`,
++      );
++    }
++  }
++  if (!RAW_CDP_SEND_ALLOW.has(norm)) {
++    for (const m of src.matchAll(RAW_CDP_SEND_RE)) {
++      violations.push(
++        `${norm}:${lineOf(src, m.index)} raw CDP transaction outside wallet-service.ts`,
++      );
++    }
++  }
++}
++
++if (violations.length > 0) {
++  console.error("check-payment-paths: unguarded value-moving paths (PLAN-47 I4):");
++  for (const v of violations) console.error("  " + v);
++  process.exit(1);
++}
++console.log(
++  `check-payment-paths: OK (I4 holds; spend confined to ${SPEND_ALLOW.size} files, EIP-3009 capture to ${EIP3009_ALLOW.size})`,
++);
+diff --git a/scripts/check-payment-paths.test.mjs b/scripts/check-payment-paths.test.mjs
+new file mode 100644
+index 00000000..e51536c8
+--- /dev/null
++++ b/scripts/check-payment-paths.test.mjs
+@@ -0,0 +1,37 @@
++import assert from "node:assert/strict";
++import { spawnSync } from "node:child_process";
++import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
++import { tmpdir } from "node:os";
++import path from "node:path";
++import { test } from "node:test";
++
++await test("payment lint catches raw CDP signing and Compute funding outside reviewed entrypoints", () => {
++  const root = mkdtempSync(path.join(tmpdir(), "bitterbot-payment-lint-"));
++  try {
++    mkdirSync(path.join(root, "src"));
++    const file = path.join(root, "src", "unreviewed.ts");
++    for (const source of [
++      "wallet.fundSoapbox!(quote)",
++      "wallet.fundSoapbox(quote)",
++      "cdp.evm.sendTransaction(transaction)",
++    ]) {
++      writeFileSync(file, source);
++      const result = spawnSync(
++        process.execPath,
++        [path.join(import.meta.dirname, "check-payment-paths.mjs")],
++        { cwd: root, encoding: "utf8" },
++      );
++      assert.equal(result.status, 1);
++      assert.match(result.stderr, /unreviewed.ts/);
++    }
++    writeFileSync(file, "wallet.getBalance()");
++    assert.equal(
++      spawnSync(process.execPath, [path.join(import.meta.dirname, "check-payment-paths.mjs")], {
++        cwd: root,
++      }).status,
++      0,
++    );
++  } finally {
++    rmSync(root, { recursive: true, force: true });
++  }
++});
 diff --git a/scripts/install-soapbox-main.mjs b/scripts/install-soapbox-main.mjs
 new file mode 100644
 index 00000000..9d57d76b
@@ -4494,16 +4501,205 @@ index 1729b253..ba0ad100 100644
    "health",
    "doctor.findings",
    "logs.tail",
+diff --git a/src/gateway/server-methods.soapbox-registration.test.ts b/src/gateway/server-methods.soapbox-registration.test.ts
+new file mode 100644
+index 00000000..e058acad
+--- /dev/null
++++ b/src/gateway/server-methods.soapbox-registration.test.ts
+@@ -0,0 +1,145 @@
++import { mkdtemp, rm, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import path from "node:path";
++import { afterEach, describe, expect, it, vi } from "vitest";
++import type { PluginRuntime } from "../plugins/runtime/types.js";
++import type { GatewayRequestHandlerOptions } from "./server-methods/types.js";
++import plugin from "../../extensions/soapbox-compute/index.js";
++import { SoapboxClient, type SoapboxStatus } from "../infra/soapbox-client.js";
++import { createPluginRegistry, type PluginRecord } from "../plugins/registry.js";
++import { coreGatewayHandlers } from "./server-methods.js";
++
++// Isolate unrelated gateways: this suite tests the real core registry and Compute plugin.
++vi.mock("./server-methods/agent-runtime.js", () => ({ agentRuntimeHandlers: {} }));
++vi.mock("./server-methods/agent.js", () => ({ agentHandlers: {} }));
++vi.mock("./server-methods/agents.js", () => ({ agentsHandlers: {} }));
++vi.mock("./server-methods/browser.js", () => ({ browserHandlers: {} }));
++vi.mock("./server-methods/channels.js", () => ({ channelsHandlers: {} }));
++vi.mock("./server-methods/chat.js", () => ({ chatHandlers: {} }));
++vi.mock("./server-methods/circles.js", () => ({ circlesHandlers: {} }));
++vi.mock("./server-methods/config.js", () => ({ configHandlers: {} }));
++vi.mock("./server-methods/connect.js", () => ({ connectHandlers: {} }));
++vi.mock("./server-methods/cron.js", () => ({ cronHandlers: {} }));
++vi.mock("./server-methods/devices.js", () => ({ deviceHandlers: {} }));
++vi.mock("./server-methods/doctor.js", () => ({ doctorHandlers: {} }));
++vi.mock("./server-methods/dream.js", () => ({ dreamHandlers: {} }));
++vi.mock("./server-methods/exec-approvals.js", () => ({ execApprovalsHandlers: {} }));
++vi.mock("./server-methods/forage.js", () => ({ forageHandlers: {} }));
++vi.mock("./server-methods/guards.js", () => ({ guardsHandlers: {} }));
++vi.mock("./server-methods/health.js", () => ({ healthHandlers: {} }));
++vi.mock("./server-methods/logs.js", () => ({ logsHandlers: {} }));
++vi.mock("./server-methods/management.js", () => ({ managementHandlers: {} }));
++vi.mock("./server-methods/models-auth.js", () => ({ modelsAuthHandlers: {} }));
++vi.mock("./server-methods/models.js", () => ({ modelsHandlers: {} }));
++vi.mock("./server-methods/nodes.js", () => ({ nodeHandlers: {} }));
++vi.mock("./server-methods/projects.js", () => ({ projectsHandlers: {} }));
++vi.mock("./server-methods/send.js", () => ({ sendHandlers: {} }));
++vi.mock("./server-methods/sessions.js", () => ({ sessionsHandlers: {} }));
++vi.mock("./server-methods/skills.js", () => ({ skillsHandlers: {} }));
++vi.mock("./server-methods/system.js", () => ({ systemHandlers: {} }));
++vi.mock("./server-methods/talk.js", () => ({ talkHandlers: {} }));
++vi.mock("./server-methods/tts.js", () => ({ ttsHandlers: {} }));
++vi.mock("./server-methods/update.js", () => ({ updateHandlers: {} }));
++vi.mock("./server-methods/usage.js", () => ({ usageHandlers: {} }));
++vi.mock("./server-methods/voicewake.js", () => ({ voicewakeHandlers: {} }));
++vi.mock("./server-methods/wallet.js", () => ({ walletHandlers: {} }));
++vi.mock("./server-methods/web.js", () => ({ webHandlers: {} }));
++vi.mock("./server-methods/wizard.js", () => ({ wizardHandlers: {} }));
++vi.mock("./server-methods/workspace.js", () => ({ workspaceHandlers: {} }));
++
++const directories: string[] = [];
++afterEach(async () => {
++  vi.restoreAllMocks();
++  vi.unstubAllEnvs();
++  await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
++});
++
++describe("Compute plugin registration in the current gateway", () => {
++  it.each(["buyer", "operator"] as const)(
++    "owns participant handlers for %s without collisions",
++    async (role) => {
++      for (const name of ["ESCROW", "ESCROW_CODE_SHA256", "RPC_URL"])
++        vi.stubEnv(`BITTERBOT_SOAPBOX_${name}`, "");
++      const directory = await mkdtemp(path.join(tmpdir(), "soapbox-registration-"));
++      directories.push(directory);
++      await writeFile(
++        path.join(directory, "connection.json"),
++        JSON.stringify({
++          version: 1,
++          role,
++          id: "tester",
++          url: "https://compute.example",
++          token: "c".repeat(64),
++          address: `0x${"1".repeat(40)}`,
++          chain_id: 84532,
++          escrow: `0x${"2".repeat(40)}`,
++          escrow_code_sha256: "a".repeat(64),
++          rpc_url: "https://sepolia.base.org",
++        }),
++      );
++      await writeFile(
++        path.join(directory, "worker.json"),
++        JSON.stringify({ sandbox: { image: "test" } }),
++      );
++      const snapshot = {
++        settlement: "usdc_escrow",
++        principal: { id: "tester", roles: [role === "buyer" ? "submitter" : "worker"] },
++      } as SoapboxStatus;
++      vi.spyOn(SoapboxClient.prototype, "status").mockResolvedValue(snapshot);
++      const request = vi.spyOn(SoapboxClient.prototype, "request");
++      const registry = createPluginRegistry({
++        coreGatewayHandlers,
++        runtime: {} as PluginRuntime,
++        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
++      });
++      const record: PluginRecord = {
++        id: plugin.id,
++        name: "Compute",
++        source: "test",
++        origin: "bundled",
++        enabled: true,
++        status: "loaded",
++        toolNames: [],
++        hookNames: [],
++        channelIds: [],
++        providerIds: [],
++        gatewayMethods: [],
++        cliCommands: [],
++        services: [],
++        commands: [],
++        httpHandlers: 0,
++        hookCount: 0,
++        configSchema: true,
++      };
++      plugin.register(
++        registry.createApi(record, {
++          config: {},
++          pluginConfig: {
++            mode: "participant",
++            stateDirectory: directory,
++            binary: path.join(directory, "soapbox"),
++          },
++        }),
++      );
++      expect(
++        Object.keys(coreGatewayHandlers).filter((name) => name.startsWith("soapbox.")),
++      ).toEqual([]);
++      expect(registry.registry.diagnostics).toEqual([]);
++      const respond = vi.fn();
++      await registry.registry.gatewayHandlers["soapbox.status"]({
++        params: {},
++        respond,
++      } as GatewayRequestHandlerOptions);
++      expect(respond).toHaveBeenCalledWith(true, snapshot);
++      if (role === "operator") {
++        respond.mockClear();
++        await registry.registry.gatewayHandlers["soapbox.wallet"]({
++          params: {},
++          respond,
++        } as GatewayRequestHandlerOptions);
++        expect(respond.mock.calls[0][0]).toBe(false);
++        expect(request).not.toHaveBeenCalled();
++      }
++    },
++  );
++});
 diff --git a/src/gateway/server-methods.soapbox-scopes.test.ts b/src/gateway/server-methods.soapbox-scopes.test.ts
 new file mode 100644
-index 00000000..05e6d797
+index 00000000..b24dfdaf
 --- /dev/null
 +++ b/src/gateway/server-methods.soapbox-scopes.test.ts
-@@ -0,0 +1,29 @@
-+import { describe, expect, it } from "vitest";
+@@ -0,0 +1,69 @@
++import { describe, expect, it, vi } from "vitest";
 +import type { GatewayRequestOptions } from "./server-methods/types.js";
 +import { authorizeGatewayMethod } from "./server-methods.js";
 +import { soapboxHandlers } from "./server-methods/soapbox.js";
++
++// Isolate unrelated gateways: this suite tests the real core registry and Compute plugin.
++vi.mock("./server-methods/agent-runtime.js", () => ({ agentRuntimeHandlers: {} }));
++vi.mock("./server-methods/agent.js", () => ({ agentHandlers: {} }));
++vi.mock("./server-methods/agents.js", () => ({ agentsHandlers: {} }));
++vi.mock("./server-methods/browser.js", () => ({ browserHandlers: {} }));
++vi.mock("./server-methods/channels.js", () => ({ channelsHandlers: {} }));
++vi.mock("./server-methods/chat.js", () => ({ chatHandlers: {} }));
++vi.mock("./server-methods/circles.js", () => ({ circlesHandlers: {} }));
++vi.mock("./server-methods/config.js", () => ({ configHandlers: {} }));
++vi.mock("./server-methods/connect.js", () => ({ connectHandlers: {} }));
++vi.mock("./server-methods/cron.js", () => ({ cronHandlers: {} }));
++vi.mock("./server-methods/devices.js", () => ({ deviceHandlers: {} }));
++vi.mock("./server-methods/doctor.js", () => ({ doctorHandlers: {} }));
++vi.mock("./server-methods/dream.js", () => ({ dreamHandlers: {} }));
++vi.mock("./server-methods/exec-approvals.js", () => ({ execApprovalsHandlers: {} }));
++vi.mock("./server-methods/forage.js", () => ({ forageHandlers: {} }));
++vi.mock("./server-methods/guards.js", () => ({ guardsHandlers: {} }));
++vi.mock("./server-methods/health.js", () => ({ healthHandlers: {} }));
++vi.mock("./server-methods/logs.js", () => ({ logsHandlers: {} }));
++vi.mock("./server-methods/management.js", () => ({ managementHandlers: {} }));
++vi.mock("./server-methods/models-auth.js", () => ({ modelsAuthHandlers: {} }));
++vi.mock("./server-methods/models.js", () => ({ modelsHandlers: {} }));
++vi.mock("./server-methods/nodes.js", () => ({ nodeHandlers: {} }));
++vi.mock("./server-methods/projects.js", () => ({ projectsHandlers: {} }));
++vi.mock("./server-methods/send.js", () => ({ sendHandlers: {} }));
++vi.mock("./server-methods/sessions.js", () => ({ sessionsHandlers: {} }));
++vi.mock("./server-methods/skills.js", () => ({ skillsHandlers: {} }));
++vi.mock("./server-methods/system.js", () => ({ systemHandlers: {} }));
++vi.mock("./server-methods/talk.js", () => ({ talkHandlers: {} }));
++vi.mock("./server-methods/tts.js", () => ({ ttsHandlers: {} }));
++vi.mock("./server-methods/update.js", () => ({ updateHandlers: {} }));
++vi.mock("./server-methods/usage.js", () => ({ usageHandlers: {} }));
++vi.mock("./server-methods/voicewake.js", () => ({ voicewakeHandlers: {} }));
++vi.mock("./server-methods/wallet.js", () => ({ walletHandlers: {} }));
++vi.mock("./server-methods/web.js", () => ({ webHandlers: {} }));
++vi.mock("./server-methods/wizard.js", () => ({ wizardHandlers: {} }));
++vi.mock("./server-methods/workspace.js", () => ({ workspaceHandlers: {} }));
 +
 +const read = new Set([
 +  "soapbox.status",
@@ -4523,25 +4719,19 @@ index 00000000..05e6d797
 +        read.has(method),
 +      );
 +      expect(authorizeGatewayMethod(method, client(["operator.write"])) === null).toBe(
-+        method !== "soapbox.worker.pause",
++        !["soapbox.worker.pause", "soapbox.payment.fund", "soapbox.payment.refresh"].includes(
++          method,
++        ),
 +      );
 +      expect(authorizeGatewayMethod(method, client(["operator.admin"], "node"))).not.toBeNull();
 +    }
 +  });
 +});
 diff --git a/src/gateway/server-methods.ts b/src/gateway/server-methods.ts
-index 550efc47..808125f2 100644
+index 550efc47..dd3e48cc 100644
 --- a/src/gateway/server-methods.ts
 +++ b/src/gateway/server-methods.ts
-@@ -27,6 +27,7 @@ import { projectsHandlers } from "./server-methods/projects.js";
- import { sendHandlers } from "./server-methods/send.js";
- import { sessionsHandlers } from "./server-methods/sessions.js";
- import { skillsHandlers } from "./server-methods/skills.js";
-+import { soapboxHandlers } from "./server-methods/soapbox.js";
- import { systemHandlers } from "./server-methods/system.js";
- import { talkHandlers } from "./server-methods/talk.js";
- import { ttsHandlers } from "./server-methods/tts.js";
-@@ -63,8 +64,13 @@ const PAIRING_METHODS = new Set([
+@@ -63,8 +63,13 @@ const PAIRING_METHODS = new Set([
    "device.token.revoke",
    "node.rename",
  ]);
@@ -4556,26 +4746,16 @@ index 550efc47..808125f2 100644
    "health",
    "doctor.findings",
    "logs.tail",
-@@ -147,6 +153,11 @@ const READ_METHODS = new Set([
+@@ -147,6 +152,9 @@ const READ_METHODS = new Set([
    "guards.status",
  ]);
  const WRITE_METHODS = new Set([
 +  "soapbox.submit",
-+  "soapbox.payment.fund",
-+  "soapbox.payment.refresh",
 +  "soapbox.cancel",
 +  "soapbox.artifact.put",
    "send",
    "agent",
    "agent.wait",
-@@ -288,6 +299,7 @@ export function authorizeGatewayMethod(method: string, client: GatewayRequestOpt
- }
- 
- export const coreGatewayHandlers: GatewayRequestHandlers = {
-+  ...soapboxHandlers,
-   ...connectHandlers,
-   ...logsHandlers,
-   ...voicewakeHandlers,
 diff --git a/src/gateway/server-methods/soapbox-setup.ts b/src/gateway/server-methods/soapbox-setup.ts
 new file mode 100644
 index 00000000..dbbc8052
@@ -4650,10 +4830,10 @@ index 00000000..dbbc8052
 +}
 diff --git a/src/gateway/server-methods/soapbox.test.ts b/src/gateway/server-methods/soapbox.test.ts
 new file mode 100644
-index 00000000..51d169ef
+index 00000000..3b21c5c9
 --- /dev/null
 +++ b/src/gateway/server-methods/soapbox.test.ts
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,125 @@
 +import { afterEach, describe, expect, it, vi } from "vitest";
 +import type { GatewayRequestHandlerOptions } from "./types.js";
 +import { createSoapboxHandlers, soapboxHandlers } from "./soapbox.js";
@@ -4678,7 +4858,11 @@ index 00000000..51d169ef
 +});
 +async function invoke(method: string, params: Record<string, unknown>) {
 +  const respond = vi.fn();
-+  await soapboxHandlers[method]({ params, respond } as unknown as GatewayRequestHandlerOptions);
++  await soapboxHandlers[method]({
++    params,
++    respond,
++    client: { connect: { role: "operator", scopes: ["operator.admin"] } },
++  } as unknown as GatewayRequestHandlerOptions);
 +  return respond;
 +}
 +describe("Soapbox gateway adapter", () => {
@@ -4711,13 +4895,32 @@ index 00000000..51d169ef
 +      .mockResolvedValueOnce({ status: "queued" });
 +    const respond = vi.fn();
 +    await createSoapboxHandlers(main)["soapbox.payment.fund"]({
-+      params: { id: "job-1" },
++      params: { id: "job-1", approval: payment },
++      client: { connect: { role: "operator", scopes: ["operator.admin"] } },
 +      respond,
 +    } as unknown as GatewayRequestHandlerOptions);
-+    expect(fake.wallet).toHaveBeenCalledWith(main);
++    expect(fake.wallet).toHaveBeenCalledWith(main, payment);
 +    expect(fake.fund).toHaveBeenCalledWith(payment);
 +    expect(main.network).toBe("base");
 +    expect(respond.mock.calls[0][0]).toBe(true);
++  });
++  it("requires admin and the reviewed quote before constructing a signing wallet", async () => {
++    const payment = { chain_id: 84532, amount_microusdc: 2000 };
++    fake.request.mockResolvedValue({ status: "awaiting_payment", payment });
++    for (const scopes of [["operator.write"], ["operator.read"], []]) {
++      await soapboxHandlers["soapbox.payment.fund"]({
++        params: { id: "job-1", approval: payment },
++        client: { connect: { role: "operator", scopes } },
++        respond: vi.fn(),
++      } as unknown as GatewayRequestHandlerOptions);
++    }
++    expect(fake.request).not.toHaveBeenCalled();
++    await invoke("soapbox.payment.fund", { id: "job-1" });
++    await invoke("soapbox.payment.fund", {
++      id: "job-1",
++      approval: { ...payment, amount_microusdc: 1 },
++    });
++    expect(fake.wallet).not.toHaveBeenCalled();
 +  });
 +  it("returns a disabled state without connecting", async () => {
 +    fake.enabled = false;
@@ -4758,10 +4961,10 @@ index 00000000..51d169ef
 +});
 diff --git a/src/gateway/server-methods/soapbox.ts b/src/gateway/server-methods/soapbox.ts
 new file mode 100644
-index 00000000..d4952ef2
+index 00000000..5b1abf3d
 --- /dev/null
 +++ b/src/gateway/server-methods/soapbox.ts
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,143 @@
 +import type { WalletConfig } from "../../config/types.wallet.js";
 +import type { GatewayRequestHandlers } from "./types.js";
 +import {
@@ -4769,6 +4972,7 @@ index 00000000..d4952ef2
 +  type SoapboxJob,
 +  type SoapboxClient,
 +} from "../../infra/soapbox-client.js";
++import { assertApprovedSoapboxQuote } from "../../services/soapbox-payment.js";
 +import { createSoapboxWallet, getSoapboxWalletStatus } from "../../services/soapbox-wallet.js";
 +import { ErrorCodes, errorShape } from "../protocol/index.js";
 +
@@ -4831,15 +5035,21 @@ index 00000000..d4952ef2
 +        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(error)));
 +      }
 +    },
-+    "soapbox.payment.fund": async ({ params, respond }) => {
++    "soapbox.payment.fund": async ({ params, respond, client: gatewayClient }) => {
 +      try {
++        if (
++          gatewayClient?.connect.role !== "operator" ||
++          !gatewayClient.connect.scopes?.includes("operator.admin")
++        )
++          throw new Error("Compute funding requires operator.admin");
 +        requireBuyer();
 +        const client = getClient();
 +        if (!client) throw new Error("Soapbox is disabled");
 +        const job = await client.request<SoapboxJob>("GET", `/v1/jobs/${id(params.id)}`);
 +        if (!job.payment || job.status !== "awaiting_payment")
 +          throw new Error("Job is not awaiting USDC funding");
-+        const wallet = await createSoapboxWallet(mainWallet);
++        assertApprovedSoapboxQuote(params.approval, job.payment);
++        const wallet = await createSoapboxWallet(mainWallet, job.payment);
 +        const funding = await wallet.fundSoapbox!(job.payment);
 +        const updated = await client.request<SoapboxJob>(
 +          "POST",
@@ -4847,8 +5057,15 @@ index 00000000..d4952ef2
 +          {},
 +        );
 +        respond(true, { funding, job: updated });
-+      } catch (error) {
-+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, String(error)));
++      } catch {
++        respond(
++          false,
++          undefined,
++          errorShape(
++            ErrorCodes.INVALID_REQUEST,
++            "Compute funding did not complete. Use an admin connection, review the current quote, and refresh its payment state before retrying.",
++          ),
++        );
 +      }
 +    },
 +    "soapbox.status": async ({ respond }) => {
@@ -4892,18 +5109,10 @@ index 00000000..d4952ef2
 +
 +export const soapboxHandlers = createSoapboxHandlers();
 diff --git a/src/gateway/server.impl.ts b/src/gateway/server.impl.ts
-index 2d03e794..f9e632d9 100644
+index 2d03e794..58792854 100644
 --- a/src/gateway/server.impl.ts
 +++ b/src/gateway/server.impl.ts
-@@ -43,6 +43,7 @@ import {
-   refreshRemoteBinsForConnectedNodes,
-   setSkillsRemoteRegistry,
- } from "../infra/skills-remote.js";
-+import { startSoapboxService } from "../infra/soapbox-service.js";
- import { scheduleGatewayUpdateCheck } from "../infra/update-startup.js";
- import { startDiagnosticHeartbeat, stopDiagnosticHeartbeat } from "../logging/diagnostic.js";
- import { createSubsystemLogger, runtimeForLogger } from "../logging/subsystem.js";
-@@ -62,6 +63,7 @@ import { NodeRegistry } from "./node-registry.js";
+@@ -62,6 +62,7 @@ import { NodeRegistry } from "./node-registry.js";
  import { createChannelManager } from "./server-channels.js";
  import { createAgentEventHandler } from "./server-chat.js";
  import { createGatewayCloseHandler } from "./server-close.js";
@@ -4911,7 +5120,7 @@ index 2d03e794..f9e632d9 100644
  import { startGatewayDiscovery } from "./server-discovery-runtime.js";
  import { applyGatewayLaneConcurrency } from "./server-lanes.js";
  import { startGatewayMaintenanceTimers } from "./server-maintenance.js";
-@@ -477,7 +479,13 @@ export async function startGatewayServer(
+@@ -477,7 +478,13 @@ export async function startGatewayServer(
        });
  
    const noopInterval = () => setInterval(() => {}, 1 << 30);
@@ -4926,22 +5135,6 @@ index 2d03e794..f9e632d9 100644
    let healthInterval = noopInterval();
    let dedupeCleanup = noopInterval();
    let eventLoopMonitor: EventLoopMonitorHandle = { stop: () => {} };
-@@ -685,6 +693,7 @@ export async function startGatewayServer(
-   }
- 
-   // Run gateway_start plugin hook (fire-and-forget)
-+  const stopSoapbox = minimalTestGateway ? async () => {} : await startSoapboxService();
-   if (!minimalTestGateway) {
-     const hookRunner = getGlobalHookRunner();
-     if (hookRunner?.hasHooks("gateway_start")) {
-@@ -777,6 +786,7 @@ export async function startGatewayServer(
-       }
-       skillsChangeUnsub();
-       authRateLimiter?.dispose();
-+      await stopSoapbox();
-       await close(opts);
-     },
-   };
 diff --git a/src/infra/soapbox-client.test.ts b/src/infra/soapbox-client.test.ts
 new file mode 100644
 index 00000000..80306282
@@ -5208,10 +5401,10 @@ index 00000000..3111eb4d
 +}
 diff --git a/src/infra/soapbox-connection.test.ts b/src/infra/soapbox-connection.test.ts
 new file mode 100644
-index 00000000..4d34a7aa
+index 00000000..0c498ea1
 --- /dev/null
 +++ b/src/infra/soapbox-connection.test.ts
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,57 @@
 +import { describe, it, expect } from "vitest";
 +import {
 +  parseSoapboxConnection,
@@ -5236,6 +5429,8 @@ index 00000000..4d34a7aa
 +      { chain_id: 8453 },
 +      { url: "http://remote.example" },
 +      { url: "https://user:password@example.com" },
++      { rpc_url: "https://provider.example/v2/private-provider-key" },
++      { rpc_url: "https://sepolia.base.org?api-key=private-provider-key" },
 +      { address: `0x${"0".repeat(40)}` },
 +    ])
 +      expect(() => parseSoapboxConnection({ ...connection, ...patch })).toThrow();
@@ -5269,10 +5464,10 @@ index 00000000..4d34a7aa
 +});
 diff --git a/src/infra/soapbox-connection.ts b/src/infra/soapbox-connection.ts
 new file mode 100644
-index 00000000..6e785db7
+index 00000000..c74b0cf1
 --- /dev/null
 +++ b/src/infra/soapbox-connection.ts
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,61 @@
 +import { SoapboxClient, type SoapboxStatus } from "./soapbox-client.js";
 +
 +/** Portable enrollment file. Contains one scoped API token, never wallet signing keys. */
@@ -5306,9 +5501,8 @@ index 00000000..6e785db7
 +  )
 +    throw new Error("Invalid Base Sepolia enrollment file");
 +  new SoapboxClient(c.url, c.token);
-+  const rpc = new URL(c.rpc_url);
-+  if (rpc.protocol !== "https:" || rpc.username || rpc.password || rpc.hash)
-+    throw new Error("Payment RPC requires HTTPS without embedded credentials");
++  if (!["https://sepolia.base.org", "https://sepolia.base.org/"].includes(c.rpc_url))
++    throw new Error("Enrollment must use the public Base Sepolia RPC endpoint");
 +  return c as SoapboxConnection;
 +}
 +export function verifySoapboxConnection(c: SoapboxConnection, s: SoapboxStatus): void {
@@ -5335,6 +5529,18 @@ index 00000000..6e785db7
 +    if (env[key]) result[key] = env[key];
 +  return result;
 +}
+diff --git a/src/infra/soapbox-payment-policy.ts b/src/infra/soapbox-payment-policy.ts
+new file mode 100644
+index 00000000..c4c1593e
+--- /dev/null
++++ b/src/infra/soapbox-payment-policy.ts
+@@ -0,0 +1,6 @@
++/** Reviewed private pilot deployment. Enrollment files cannot change the payment destination. */
++export const SOAPBOX_PAYMENT_POLICY = {
++  chainId: 84532,
++  escrow: "0x85dbc619cd8f05e06a5fc231d04483b6aa7bff17",
++  codeSha256: "b19b0bdd3ec912324feefbc91b61efe049c160ed5bed20c029b1cbeeda5553a99",
++} as const;
 diff --git a/src/infra/soapbox-service.ts b/src/infra/soapbox-service.ts
 new file mode 100644
 index 00000000..040d0dd9
@@ -5486,14 +5692,129 @@ index e596d6ca..2743d900 100644
  ]);
  
  const normalizeList = (value: unknown): string[] => {
+diff --git a/src/services/soapbox-payment-flow.test.ts b/src/services/soapbox-payment-flow.test.ts
+new file mode 100644
+index 00000000..36eeb1ec
+--- /dev/null
++++ b/src/services/soapbox-payment-flow.test.ts
+@@ -0,0 +1,105 @@
++import { beforeEach, describe, expect, it, vi } from "vitest";
++import type { SoapboxPaymentQuote } from "../infra/soapbox-client.js";
++import { fundSoapboxEscrow } from "./soapbox-payment.js";
++
++const fake = vi.hoisted(() => ({
++  chain: vi.fn(),
++  code: vi.fn(),
++  read: vi.fn(),
++  receipt: vi.fn(),
++  escrow: `0x${"2".repeat(40)}`,
++  token: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
++}));
++vi.mock("viem", async (original) => ({
++  ...(await original<Record<string, unknown>>()),
++  createPublicClient: () => ({
++    getChainId: fake.chain,
++    getCode: fake.code,
++    readContract: fake.read,
++    waitForTransactionReceipt: fake.receipt,
++  }),
++}));
++vi.mock("../infra/soapbox-payment-policy.js", async () => {
++  const { createHash } = await import("node:crypto");
++  return {
++    SOAPBOX_PAYMENT_POLICY: {
++      chainId: 84532,
++      escrow: fake.escrow,
++      codeSha256: createHash("sha256").update(Buffer.from("6000", "hex")).digest("hex"),
++    },
++  };
++});
++const quote = (): SoapboxPaymentQuote => ({
++  chain_id: 84532,
++  token: fake.token,
++  escrow: fake.escrow,
++  buyer: `0x${"1".repeat(40)}`,
++  operator: `0x${"3".repeat(40)}`,
++  key: `0x${"a".repeat(64)}`,
++  amount_microusdc: 2000,
++  expires: Math.floor(Date.now() / 1000) + 3600,
++});
++beforeEach(() => {
++  vi.resetAllMocks();
++  fake.chain.mockResolvedValue(84532);
++  fake.code.mockResolvedValue("0x6000");
++  fake.read.mockImplementation(async ({ functionName }) =>
++    functionName === "token" ? fake.token : ["0x0", "0x0", 0n, 0n, 0n, `0x${"0".repeat(64)}`],
++  );
++  fake.receipt.mockResolvedValue({ status: "success" });
++});
++function options() {
++  const payment = quote();
++  return {
++    quote: payment,
++    buyer: payment.buyer,
++    network: "base-sepolia",
++    env: {},
++    reserve: vi.fn(async () => {}),
++    send: vi.fn<Parameters<typeof fundSoapboxEscrow>[0]["send"]>(async () => `0x${"b".repeat(64)}`),
++  };
++}
++describe("Compute escrow funding sequence", () => {
++  it("reserves before approval and waits for approval confirmation before funding", async () => {
++    const request = options(),
++      order: string[] = [];
++    request.reserve.mockImplementation(async () => {
++      order.push("reserve");
++    });
++    request.send.mockImplementation(async (transaction) => {
++      order.push(transaction.to === fake.token ? "approve" : "fund");
++      return `0x${"b".repeat(64)}` as `0x${string}`;
++    });
++    fake.receipt.mockImplementation(async () => {
++      order.push("confirmed");
++      return { status: "success" };
++    });
++    expect((await fundSoapboxEscrow(request)).status).toBe("funded");
++    expect(order).toEqual(["reserve", "approve", "confirmed", "fund", "confirmed"]);
++    expect(fake.receipt).toHaveBeenCalledWith(
++      expect.objectContaining({ confirmations: 2, timeout: 45000 }),
++    );
++    expect(request.send.mock.calls.every(([transaction]) => transaction.value === 0n)).toBe(true);
++  });
++  it.each(["chain", "bytecode", "token", "unapproved escrow"])(
++    "rejects %s before reserving or signing",
++    async (failure) => {
++      const request = options();
++      if (failure === "chain") fake.chain.mockResolvedValue(8453);
++      if (failure === "bytecode") fake.code.mockResolvedValue("0x6001");
++      if (failure === "token") fake.read.mockResolvedValue(`0x${"9".repeat(40)}`);
++      if (failure === "unapproved escrow") request.quote.escrow = `0x${"8".repeat(40)}`;
++      await expect(fundSoapboxEscrow(request)).rejects.toThrow();
++      expect(request.reserve).not.toHaveBeenCalled();
++      expect(request.send).not.toHaveBeenCalled();
++    },
++  );
++  it.each(["reverted", "timeout"])("does not fund after approval %s", async (failure) => {
++    const request = options();
++    if (failure === "reverted") fake.receipt.mockResolvedValue({ status: "reverted" });
++    else fake.receipt.mockRejectedValue(new Error("receipt timed out"));
++    await expect(fundSoapboxEscrow(request)).rejects.toThrow();
++    expect(request.reserve).toHaveBeenCalledTimes(1);
++    expect(request.send).toHaveBeenCalledTimes(1);
++  });
++});
 diff --git a/src/services/soapbox-payment.test.ts b/src/services/soapbox-payment.test.ts
 new file mode 100644
-index 00000000..d05ad7d6
+index 00000000..0424ccc7
 --- /dev/null
 +++ b/src/services/soapbox-payment.test.ts
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,57 @@
 +import { describe, expect, it } from "vitest";
-+import { validateSoapboxQuote, type SoapboxPaymentQuote } from "./soapbox-payment.js";
++import {
++  assertApprovedSoapboxQuote,
++  validateSoapboxQuote,
++  type SoapboxPaymentQuote,
++} from "./soapbox-payment.js";
 +
 +const buyer = `0x${"1".repeat(40)}`;
 +const quote = (): SoapboxPaymentQuote => ({
@@ -5507,6 +5828,24 @@ index 00000000..d05ad7d6
 +  expires: Math.floor(Date.now() / 1000) + 3600,
 +});
 +describe("Soapbox wallet funding boundary", () => {
++  it("requires approval of every payment field and rejects changed quotes", () => {
++    const payment = quote();
++    expect(() => assertApprovedSoapboxQuote(undefined, payment)).toThrow("approve");
++    expect(() => assertApprovedSoapboxQuote({ ...payment }, payment)).not.toThrow();
++    for (const field of [
++      "chain_id",
++      "token",
++      "escrow",
++      "key",
++      "buyer",
++      "operator",
++      "amount_microusdc",
++      "expires",
++    ])
++      expect(() => assertApprovedSoapboxQuote({ ...payment, [field]: "changed" }, payment)).toThrow(
++        "changed",
++      );
++  });
 +  it("allows exact integer test-USDC quotes for the current buyer", () => {
 +    expect(() => validateSoapboxQuote(quote(), buyer, "base-sepolia")).not.toThrow();
 +  });
@@ -5529,14 +5868,15 @@ index 00000000..d05ad7d6
 +});
 diff --git a/src/services/soapbox-payment.ts b/src/services/soapbox-payment.ts
 new file mode 100644
-index 00000000..91048ed6
+index 00000000..859c7311
 --- /dev/null
 +++ b/src/services/soapbox-payment.ts
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,147 @@
 +import { createHash } from "node:crypto";
 +import { createPublicClient, encodeFunctionData, http, parseAbi, type Hex } from "viem";
 +import { baseSepolia } from "viem/chains";
 +import type { SoapboxPaymentQuote } from "../infra/soapbox-client.js";
++import { SOAPBOX_PAYMENT_POLICY } from "../infra/soapbox-payment-policy.js";
 +export type { SoapboxPaymentQuote } from "../infra/soapbox-client.js";
 +
 +export const soapboxEscrowAbi = parseAbi([
@@ -5546,6 +5886,23 @@ index 00000000..91048ed6
 +]);
 +const approveAbi = parseAbi(["function approve(address,uint256) returns (bool)"]);
 +const usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
++
++export function assertApprovedSoapboxQuote(approved: unknown, quote: SoapboxPaymentQuote): void {
++  if (!approved || typeof approved !== "object" || Array.isArray(approved))
++    throw new Error("Review and approve this payment quote in Compute");
++  for (const field of [
++    "chain_id",
++    "token",
++    "escrow",
++    "key",
++    "buyer",
++    "operator",
++    "amount_microusdc",
++    "expires",
++  ] as const)
++    if ((approved as Record<string, unknown>)[field] !== quote[field])
++      throw new Error("Payment quote changed; review it again before funding");
++}
 +export function validateSoapboxQuote(quote: SoapboxPaymentQuote, buyer: string, network: string) {
 +  if (network !== "base-sepolia" || quote.chain_id !== 84532)
 +    throw new Error("Soapbox payments currently require Base Sepolia");
@@ -5582,13 +5939,19 @@ index 00000000..91048ed6
 +  const { quote, buyer, network, send, reserve, env = process.env } = options;
 +  validateSoapboxQuote(quote, buyer, network);
 +  if (
-+    env.BITTERBOT_SOAPBOX_ESCROW?.toLowerCase() !== quote.escrow.toLowerCase() ||
-+    !/^[\da-f]{64}$/.test(env.BITTERBOT_SOAPBOX_ESCROW_CODE_SHA256 ?? "")
++    quote.escrow.toLowerCase() !== SOAPBOX_PAYMENT_POLICY.escrow ||
++    (env.BITTERBOT_SOAPBOX_ESCROW &&
++      env.BITTERBOT_SOAPBOX_ESCROW.toLowerCase() !== SOAPBOX_PAYMENT_POLICY.escrow) ||
++    (env.BITTERBOT_SOAPBOX_ESCROW_CODE_SHA256 &&
++      env.BITTERBOT_SOAPBOX_ESCROW_CODE_SHA256 !== SOAPBOX_PAYMENT_POLICY.codeSha256)
 +  )
-+    throw new Error("Operator must pin the escrow address and deployed bytecode hash");
++    throw new Error("Payment escrow is not the approved private pilot deployment");
 +  const rpcUrl = env.BITTERBOT_SOAPBOX_RPC_URL ?? "https://sepolia.base.org";
 +  if (new URL(rpcUrl).protocol !== "https:") throw new Error("Payment RPC requires HTTPS");
-+  const client = createPublicClient({ chain: baseSepolia, transport: http(rpcUrl) });
++  const client = createPublicClient({
++    chain: baseSepolia,
++    transport: http(rpcUrl, { timeout: 8000, retryCount: 1 }),
++  });
 +  if ((await client.getChainId()) !== 84532) throw new Error("Wrong payment chain");
 +  const address = quote.escrow as Hex;
 +  const code = await client.getCode({ address });
@@ -5596,7 +5959,7 @@ index 00000000..91048ed6
 +    !code ||
 +    createHash("sha256")
 +      .update(Buffer.from(code.slice(2), "hex"))
-+      .digest("hex") !== env.BITTERBOT_SOAPBOX_ESCROW_CODE_SHA256
++      .digest("hex") !== SOAPBOX_PAYMENT_POLICY.codeSha256
 +  )
 +    throw new Error("Escrow bytecode does not match the operator's pin");
 +  const token = await client.readContract({
@@ -5633,7 +5996,11 @@ index 00000000..91048ed6
 +      args: [address, BigInt(quote.amount_microusdc)],
 +    }),
 +  });
-+  const approved = await client.waitForTransactionReceipt({ hash: approval, confirmations: 2 });
++  const approved = await client.waitForTransactionReceipt({
++    hash: approval,
++    confirmations: 2,
++    timeout: 45000,
++  });
 +  if (approved.status !== "success") throw new Error("USDC approval reverted");
 +  const txHash = await send({
 +    to: address,
@@ -5644,7 +6011,11 @@ index 00000000..91048ed6
 +      args: [key, quote.operator as Hex, BigInt(quote.amount_microusdc), BigInt(quote.expires)],
 +    }),
 +  });
-+  const funded = await client.waitForTransactionReceipt({ hash: txHash, confirmations: 2 });
++  const funded = await client.waitForTransactionReceipt({
++    hash: txHash,
++    confirmations: 2,
++    timeout: 45000,
++  });
 +  if (funded.status !== "success") throw new Error("Escrow funding reverted");
 +  return { status: "funded", txHash };
 +}
@@ -5705,7 +6076,7 @@ index 00000000..fc01eaf6
 +);
 diff --git a/src/services/soapbox-setup-runtime.ts b/src/services/soapbox-setup-runtime.ts
 new file mode 100644
-index 00000000..375f5a23
+index 00000000..96163f3b
 --- /dev/null
 +++ b/src/services/soapbox-setup-runtime.ts
 @@ -0,0 +1,281 @@
@@ -5728,10 +6099,10 @@ index 00000000..375f5a23
 +import { soapboxOperatorEnvironment } from "../infra/soapbox-connection.js";
 +
 +export const SOAPBOX_SETUP_RELEASE = {
-+  url: "https://github.com/Bitterbot-AI/soapbox/releases/tag/v0.3.0-rc.1",
-+  filename: "soapbox-0.3.0-rc.1-linux-x64.tar.gz",
-+  bytes: 15824317,
-+  sha256: "03c4c2de8e42032c6710ce0b4f1170d893c2a36b26a0ad88398173cd16ff9588",
++  url: "https://github.com/Bitterbot-AI/soapbox/releases/tag/v0.3.0-rc.3",
++  filename: "soapbox-runtime-0.3.0-rc.3-linux-x64.tar.gz",
++  bytes: 4297661,
++  sha256: "2bcabeeb13ca212ecaf9af0e2860b30d53f3a4b13f1956fb962bf0ebf2936190",
 +};
 +
 +/** Fresh operator profiles do not have the wallet-created shared runtime directory. */
@@ -5882,7 +6253,7 @@ index 00000000..375f5a23
 +      30000,
 +    );
 +    await run("tar", ["-xzf", path.join(directory, "runtime.tar.gz"), "-C", directory]);
-+    const released = path.join(directory, "soapbox-0.3.0-rc.1-linux-x64");
++    const released = path.join(directory, SOAPBOX_SETUP_RELEASE.filename.replace(/\.tar\.gz$/, ""));
 +    const build = path.join(directory, "image"),
 +      models = path.join(directory, "models");
 +    if (/[\n,]/.test(models)) throw new Error("Unsupported runtime directory");
@@ -6155,10 +6526,10 @@ index 00000000..5e498e57
 +});
 diff --git a/src/services/soapbox-setup.ts b/src/services/soapbox-setup.ts
 new file mode 100644
-index 00000000..7af17dbd
+index 00000000..87789f2d
 --- /dev/null
 +++ b/src/services/soapbox-setup.ts
-@@ -0,0 +1,204 @@
+@@ -0,0 +1,206 @@
 +import JSON5 from "json5";
 +import { randomUUID } from "node:crypto";
 +import { copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
@@ -6278,7 +6649,8 @@ index 00000000..7af17dbd
 +    }
 +    if (
 +      c.role === "buyer" &&
-+      (await soapboxWalletIdentity())?.toLowerCase() !== c.address.toLowerCase()
++      (await soapboxWalletIdentity(this.options.mainWallet))?.toLowerCase() !==
++        c.address.toLowerCase()
 +    )
 +      throw new Error(
 +        "Enrollment address must match your separate Compute test wallet. Create the wallet first, then request an enrollment for that address.",
@@ -6315,7 +6687,8 @@ index 00000000..7af17dbd
 +    verifySoapboxConnection(c, await new SoapboxClient(c.url, c.token).status());
 +    if (
 +      c.role === "buyer" &&
-+      (await soapboxWalletIdentity())?.toLowerCase() !== c.address.toLowerCase()
++      (await soapboxWalletIdentity(this.options.mainWallet))?.toLowerCase() !==
++        c.address.toLowerCase()
 +    )
 +      throw new Error("Buyer wallet identity changed; import enrollment again");
 +    if (c.role === "operator" && !this.runtime.ready)
@@ -6365,14 +6738,15 @@ index 00000000..7af17dbd
 +}
 diff --git a/src/services/soapbox-wallet-onboarding.test.ts b/src/services/soapbox-wallet-onboarding.test.ts
 new file mode 100644
-index 00000000..b69c2970
+index 00000000..408d0760
 --- /dev/null
 +++ b/src/services/soapbox-wallet-onboarding.test.ts
-@@ -0,0 +1,64 @@
-+import { mkdtemp, readFile, rm } from "node:fs/promises";
+@@ -0,0 +1,126 @@
++import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 +import { tmpdir } from "node:os";
 +import path from "node:path";
 +import { afterEach, expect, it, vi } from "vitest";
++import type { SoapboxPaymentQuote } from "../infra/soapbox-client.js";
 +
 +let directory: string | undefined;
 +afterEach(async () => {
@@ -6409,7 +6783,7 @@ index 00000000..b69c2970
 +  };
 +  const envSecret = process.env.CDP_WALLET_SECRET;
 +  expect(await initializeSoapboxWallet(main, auth)).toBe(address);
-+  expect(account).toHaveBeenCalledWith({ name: "bitterbot-owner-base-sepolia" });
++  expect(account).toHaveBeenCalledWith({ name: "bitterbot-compute-base-sepolia" });
 +  expect(
 +    JSON.parse(await readFile(path.join(soapboxWalletDirectory, "credentials.json"), "utf8")),
 +  ).toEqual(auth);
@@ -6421,7 +6795,11 @@ index 00000000..b69c2970
 +      cdpApiKeyId: "test-id",
 +      cdpApiKeySecret: "test-key",
 +    }),
-+    expect.objectContaining({ walletSecret: "test-secret" }),
++    expect.objectContaining({
++      walletSecret: "test-secret",
++      accountName: "bitterbot-compute-base-sepolia",
++      expectedAddress: address,
++    }),
 +  );
 +  expect(process.env.CDP_WALLET_SECRET).toBe(envSecret);
 +  expect(main.network).toBe("base");
@@ -6432,6 +6810,63 @@ index 00000000..b69c2970
 +  expect(
 +    JSON.parse(await readFile(path.join(soapboxWalletDirectory, "credentials.json"), "utf8")),
 +  ).toEqual(auth);
++  const before = await readFile(path.join(soapboxWalletDirectory, "wallet-data.json"), "utf8");
++  await mkdir(main.walletStorePath, { recursive: true });
++  await writeFile(
++    path.join(main.walletStorePath, "wallet-data.json"),
++    JSON.stringify({ address, ownerAddress: address }),
++  );
++  await expect(createSoapboxWallet(main)).rejects.toThrow("addresses must be separate");
++  expect(await readFile(path.join(soapboxWalletDirectory, "wallet-data.json"), "utf8")).toBe(
++    before,
++  );
++  await writeFile(
++    path.join(main.walletStorePath, "wallet-data.json"),
++    JSON.stringify({ address: `0x${"3".repeat(40)}` }),
++  );
++  await writeFile(
++    path.join(soapboxWalletDirectory, "wallet-data.json"),
++    JSON.stringify({ name: "bitterbot-owner-base-sepolia", address }),
++  );
++  await expect(createSoapboxWallet({ ...main, network: "base-sepolia" })).rejects.toThrow(
++    "Legacy Compute identity conflicts",
++  );
++  await createSoapboxWallet(main);
++  expect(create).toHaveBeenLastCalledWith(
++    expect.anything(),
++    expect.objectContaining({
++      accountName: "bitterbot-owner-base-sepolia",
++      expectedAddress: address,
++    }),
++  );
++  const fund = vi.fn(async () => ({ status: "funded", txHash: "0xtest" }));
++  create.mockReturnValue({ fundSoapbox: fund });
++  const payment = {
++    chain_id: 84532,
++    token: `0x${"4".repeat(40)}`,
++    escrow: `0x${"5".repeat(40)}`,
++    key: `0x${"a".repeat(64)}`,
++    buyer: address,
++    operator: `0x${"6".repeat(40)}`,
++    amount_microusdc: 2000,
++    expires: 2000000000,
++  } as SoapboxPaymentQuote;
++  await expect((await createSoapboxWallet(main)).fundSoapbox(payment)).rejects.toThrow("approve");
++  const approvedWallet = await createSoapboxWallet(main, payment);
++  payment.amount_microusdc = 3000;
++  await expect(approvedWallet.fundSoapbox(payment)).rejects.toThrow("changed");
++  expect(fund).not.toHaveBeenCalled();
++  await approvedWallet.fundSoapbox({ ...payment, amount_microusdc: 2000 });
++  expect(fund).toHaveBeenCalledTimes(1);
++  const decision = JSON.parse(
++    (await readFile(path.join(soapboxWalletDirectory, "funding-approvals.jsonl"), "utf8")).trim(),
++  );
++  expect(decision).toMatchObject({
++    decision: "user_reviewed",
++    amount_microusdc: 2000,
++    key: payment.key,
++  });
++  expect(JSON.stringify(decision)).not.toMatch(/test-secret|test-key/);
 +});
 diff --git a/src/services/soapbox-wallet.test.ts b/src/services/soapbox-wallet.test.ts
 new file mode 100644
@@ -6474,18 +6909,23 @@ index 00000000..adb84181
 +});
 diff --git a/src/services/soapbox-wallet.ts b/src/services/soapbox-wallet.ts
 new file mode 100644
-index 00000000..806062bc
+index 00000000..defccaf4
 --- /dev/null
 +++ b/src/services/soapbox-wallet.ts
-@@ -0,0 +1,162 @@
-+import { mkdir, readFile, realpath, writeFile, rename } from "node:fs/promises";
+@@ -0,0 +1,240 @@
++import { appendFile, mkdir, readFile, realpath, writeFile, rename } from "node:fs/promises";
 +import { homedir } from "node:os";
 +import path from "node:path";
 +import { createPublicClient, formatUnits, http, parseAbi } from "viem";
 +import { baseSepolia } from "viem/chains";
 +import type { WalletConfig } from "../config/types.wallet.js";
 +import type { SoapboxWalletStatus } from "../infra/soapbox-client.js";
++import type { SoapboxPaymentQuote } from "../infra/soapbox-client.js";
++import { assertApprovedSoapboxQuote } from "./soapbox-payment.js";
 +import { createWalletService } from "./wallet-service.js";
++
++export const SOAPBOX_ACCOUNT_NAME = "bitterbot-compute-base-sepolia";
++const LEGACY_ACCOUNT_NAME = "bitterbot-owner-base-sepolia";
 +
 +export const soapboxWalletDirectory = path.join(
 +  homedir(),
@@ -6507,7 +6947,10 @@ index 00000000..806062bc
 +  };
 +}
 +
-+export async function createSoapboxWallet(mainWallet?: WalletConfig) {
++export async function createSoapboxWallet(
++  mainWallet?: WalletConfig,
++  approvedQuote?: SoapboxPaymentQuote,
++) {
 +  await mkdir(soapboxWalletDirectory, { recursive: true, mode: 0o700 });
 +  const mainDirectory = mainWallet?.walletStorePath ?? path.join(homedir(), ".bitterbot", "wallet");
 +  const mainResolved = await realpath(mainDirectory).catch((error: NodeJS.ErrnoException) => {
@@ -6516,8 +6959,11 @@ index 00000000..806062bc
 +  });
 +  if ((await realpath(soapboxWalletDirectory)) === mainResolved)
 +    throw new Error("Compute and main wallet stores must be separate");
++  const identity = await readComputeIdentity();
++  if (identity) await assertWalletSeparation(identity, mainWallet);
 +  const auth = await soapboxWalletAuthentication(mainWallet);
-+  return createWalletService(
++  const approved = approvedQuote ? structuredClone(approvedQuote) : undefined;
++  const wallet = createWalletService(
 +    {
 +      ...soapboxWalletConfig(mainWallet),
 +      cdpApiKeyId: auth.apiKeyId,
@@ -6526,8 +6972,32 @@ index 00000000..806062bc
 +    {
 +      walletSecret: auth.walletSecret,
 +      rpcUrl: process.env.BITTERBOT_SOAPBOX_RPC_URL ?? "https://sepolia.base.org",
++      accountName: identity?.name ?? SOAPBOX_ACCOUNT_NAME,
++      expectedAddress: identity?.address,
 +    },
 +  );
++  return {
++    ...wallet,
++    async fundSoapbox(quote: SoapboxPaymentQuote) {
++      assertApprovedSoapboxQuote(approved, quote);
++      const current = await readComputeIdentity();
++      if (current) await assertWalletSeparation(current, mainWallet);
++      await appendFile(
++        path.join(soapboxWalletDirectory, "funding-approvals.jsonl"),
++        JSON.stringify({
++          at: new Date().toISOString(),
++          decision: "user_reviewed",
++          chain_id: quote.chain_id,
++          key: quote.key,
++          escrow: quote.escrow,
++          operator: quote.operator,
++          amount_microusdc: quote.amount_microusdc,
++        }) + "\n",
++        { mode: 0o600 },
++      );
++      return wallet.fundSoapbox!(quote);
++    },
++  };
 +}
 +
 +export type SoapboxWalletAuthentication = {
@@ -6552,18 +7022,53 @@ index 00000000..806062bc
 +  };
 +}
 +
-+export async function soapboxWalletIdentity(): Promise<string | null> {
++async function readComputeIdentity(): Promise<{ name: string; address: string } | null> {
 +  try {
 +    const stored = JSON.parse(
 +      await readFile(path.join(soapboxWalletDirectory, "wallet-data.json"), "utf8"),
 +    );
-+    if (stored.name !== "bitterbot-owner-base-sepolia" || !/^0x[\da-f]{40}$/i.test(stored.address))
++    if (
++      ![SOAPBOX_ACCOUNT_NAME, LEGACY_ACCOUNT_NAME].includes(stored.name) ||
++      !/^0x[\da-f]{40}$/i.test(stored.address)
++    )
 +      throw new Error("Invalid Compute test wallet identity");
-+    return stored.address;
++    return { name: stored.name, address: stored.address };
 +  } catch (error) {
 +    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
 +    throw error;
 +  }
++}
++
++async function assertWalletSeparation(
++  identity: { name: string; address: string },
++  mainWallet?: WalletConfig,
++): Promise<void> {
++  if (identity.name === LEGACY_ACCOUNT_NAME && mainWallet?.network === "base-sepolia")
++    throw new Error(
++      "Legacy Compute identity conflicts with the main testnet account; migrate Compute before continuing",
++    );
++  const mainDirectory = mainWallet?.walletStorePath ?? path.join(homedir(), ".bitterbot", "wallet");
++  let main: { address?: string; ownerAddress?: string };
++  try {
++    main = JSON.parse(await readFile(path.join(mainDirectory, "wallet-data.json"), "utf8"));
++  } catch (error) {
++    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
++    // oxlint-disable-next-line preserve-caught-error -- Wallet file errors may include private data; intentionally discard the cause.
++    throw new Error("Main wallet identity could not be checked");
++  }
++  if (
++    [main.address, main.ownerAddress].some(
++      (address) =>
++        typeof address === "string" && address.toLowerCase() === identity.address.toLowerCase(),
++    )
++  )
++    throw new Error("Compute and main wallet addresses must be separate");
++}
++
++export async function soapboxWalletIdentity(mainWallet?: WalletConfig): Promise<string | null> {
++  const identity = await readComputeIdentity();
++  if (identity) await assertWalletSeparation(identity, mainWallet);
++  return identity?.address ?? null;
 +}
 +
 +/** Provision the test account without loading AgentKit or changing the main wallet/env. */
@@ -6579,13 +7084,18 @@ index 00000000..806062bc
 +    )
 +  )
 +    throw new Error("Enter all three CDP credentials for the test wallet");
-+  const existing = await soapboxWalletIdentity();
++  const existing = await readComputeIdentity();
++  if (existing) await assertWalletSeparation(existing, mainWallet);
 +  const { CdpClient } = await import("@coinbase/cdp-sdk");
 +  const account = await new CdpClient(auth).evm.getOrCreateAccount({
-+    name: "bitterbot-owner-base-sepolia",
++    name: existing?.name ?? SOAPBOX_ACCOUNT_NAME,
 +  });
-+  if (existing && existing.toLowerCase() !== account.address.toLowerCase())
++  if (existing && existing.address.toLowerCase() !== account.address.toLowerCase())
 +    throw new Error("These credentials belong to a different test wallet");
++  await assertWalletSeparation(
++    { name: existing?.name ?? SOAPBOX_ACCOUNT_NAME, address: account.address },
++    mainWallet,
++  );
 +  // Also enforce separation from a user-configured main-wallet store before writing.
 +  await createSoapboxWallet(mainWallet);
 +  const save = async (file: string, value: unknown) => {
@@ -6594,7 +7104,7 @@ index 00000000..806062bc
 +  };
 +  if (supplied) await save(credentialsFile, auth);
 +  await save(path.join(soapboxWalletDirectory, "wallet-data.json"), {
-+    name: "bitterbot-owner-base-sepolia",
++    name: existing?.name ?? SOAPBOX_ACCOUNT_NAME,
 +    address: account.address,
 +    ownerAddress: account.address,
 +  });
@@ -6614,7 +7124,10 @@ index 00000000..806062bc
 +    const stored = JSON.parse(
 +      await readFile(path.join(soapboxWalletDirectory, "wallet-data.json"), "utf8"),
 +    );
-+    if (stored.name !== "bitterbot-owner-base-sepolia" || !/^0x[\da-f]{40}$/i.test(stored.address))
++    if (
++      ![SOAPBOX_ACCOUNT_NAME, LEGACY_ACCOUNT_NAME].includes(stored.name) ||
++      !/^0x[\da-f]{40}$/i.test(stored.address)
++    )
 +      throw new Error("Invalid Compute test wallet identity");
 +    status.address = stored.address;
 +    const rpc = process.env.BITTERBOT_SOAPBOX_RPC_URL ?? "https://sepolia.base.org";
@@ -6642,10 +7155,10 @@ index 00000000..806062bc
 +}
 diff --git a/src/services/wallet-service.soapbox.test.ts b/src/services/wallet-service.soapbox.test.ts
 new file mode 100644
-index 00000000..36faac7f
+index 00000000..1381b133
 --- /dev/null
 +++ b/src/services/wallet-service.soapbox.test.ts
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,121 @@
 +import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 +import { tmpdir } from "node:os";
 +import path from "node:path";
@@ -6653,7 +7166,11 @@ index 00000000..36faac7f
 +import type { SoapboxPaymentQuote } from "../infra/soapbox-client.js";
 +import { createWalletService } from "./wallet-service.js";
 +
-+const fake = vi.hoisted(() => ({ send: vi.fn(), address: `0x${"2".repeat(40)}` }));
++const fake = vi.hoisted(() => ({
++  send: vi.fn(),
++  account: vi.fn(),
++  address: `0x${"2".repeat(40)}`,
++}));
 +vi.mock("@coinbase/agentkit", () => ({
 +  CdpEvmWalletProvider: {
 +    configureWithWallet: async () => ({
@@ -6664,7 +7181,7 @@ index 00000000..36faac7f
 +}));
 +vi.mock("@coinbase/cdp-sdk", () => ({
 +  CdpClient: class {
-+    evm = { getOrCreateAccount: async () => ({ address: fake.address }) };
++    evm = { getOrCreateAccount: fake.account };
 +  },
 +}));
 +vi.mock("./soapbox-payment.js", () => ({
@@ -6682,6 +7199,7 @@ index 00000000..36faac7f
 +  vi.stubEnv("CDP_API_KEY_SECRET", "test");
 +  vi.stubEnv("CDP_WALLET_SECRET", "test");
 +  fake.send.mockClear();
++  fake.account.mockReset().mockResolvedValue({ address: fake.address });
 +});
 +afterEach(async () => {
 +  vi.unstubAllEnvs();
@@ -6701,6 +7219,24 @@ index 00000000..36faac7f
 +    perTransactionCapUsd: 0.1,
 +  });
 +describe("Soapbox wallet spend reservations", () => {
++  it("uses the dedicated account and rejects identity changes before signing or overwriting storage", async () => {
++    const wallet = createWalletService(
++      { network: "base-sepolia", walletStorePath: store },
++      {
++        walletSecret: "test",
++        accountName: "bitterbot-compute-base-sepolia",
++        expectedAddress: fake.address,
++      },
++    );
++    await wallet.fundSoapbox!(quote);
++    expect(fake.account).toHaveBeenCalledWith({ name: "bitterbot-compute-base-sepolia" });
++    const file = path.join(store, "wallet-data.json");
++    const before = await readFile(file, "utf8");
++    fake.account.mockResolvedValue({ address: `0x${"9".repeat(40)}` });
++    await expect(wallet.fundSoapbox!(quote)).rejects.toThrow("stored identity");
++    expect(fake.send).toHaveBeenCalledTimes(1);
++    expect(await readFile(file, "utf8")).toBe(before);
++  });
 +  it("rejects mainnet and an over-cap quote before broadcasting", async () => {
 +    await expect(
 +      createWalletService({ network: "base", walletStorePath: store }).fundSoapbox!(quote),
@@ -6745,7 +7281,7 @@ index 00000000..36faac7f
 +  });
 +});
 diff --git a/src/services/wallet-service.ts b/src/services/wallet-service.ts
-index cd815a51..1e1b5146 100644
+index cd815a51..7deab16b 100644
 --- a/src/services/wallet-service.ts
 +++ b/src/services/wallet-service.ts
 @@ -39,6 +39,9 @@ export type X402PaymentResult = {
@@ -6758,19 +7294,24 @@ index cd815a51..1e1b5146 100644
    getAddress(): Promise<string>;
    getBalance(token?: string): Promise<BalanceResult>;
    sendUsdc(to: string, amount: number, opts?: SendUsdcOptions): Promise<SendResult>;
-@@ -99,7 +102,10 @@ const ERC20_BALANCE_ABI = [
+@@ -99,7 +102,15 @@ const ERC20_BALANCE_ABI = [
    },
  ] as const;
  
 -export function createWalletService(config: WalletConfig): WalletService {
 +export function createWalletService(
 +  config: WalletConfig,
-+  authentication?: { walletSecret: string; rpcUrl?: string },
++  authentication?: {
++    walletSecret: string;
++    rpcUrl?: string;
++    accountName?: string;
++    expectedAddress?: string;
++  },
 +): WalletService {
    const network = config.network ?? "base-sepolia";
    // AgentKit's CDP wallet providers expect CDP network IDs ("base-mainnet",
    // "base-sepolia"), NOT the short "base" alias we use everywhere else for
-@@ -144,7 +150,7 @@ export function createWalletService(config: WalletConfig): WalletService {
+@@ -144,7 +155,7 @@ export function createWalletService(config: WalletConfig): WalletService {
  
      const apiKeyId = config.cdpApiKeyId ?? process.env.CDP_API_KEY_ID;
      const apiKeySecret = config.cdpApiKeySecret ?? process.env.CDP_API_KEY_SECRET;
@@ -6779,7 +7320,19 @@ index cd815a51..1e1b5146 100644
      if (!apiKeyId || !apiKeySecret || !walletSecret) {
        throw new Error(
          "Missing required CDP credentials. Set CDP_API_KEY_ID, CDP_API_KEY_SECRET, " +
-@@ -161,7 +167,8 @@ export function createWalletService(config: WalletConfig): WalletService {
+@@ -155,13 +166,19 @@ export function createWalletService(config: WalletConfig): WalletService {
+     // Resolve (or create) the single server account (MPC EOA) for this network.
+     // This is the one wallet for receiving, send_usdc, and x402.
+     const cdp = new CdpClient({ apiKeyId, apiKeySecret, walletSecret });
+-    const accountName = `bitterbot-owner-${network}`;
++    const accountName = authentication?.accountName ?? `bitterbot-owner-${network}`;
+     const account = await cdp.evm.getOrCreateAccount({ name: accountName });
++    if (
++      authentication?.expectedAddress &&
++      account.address.toLowerCase() !== authentication.expectedAddress.toLowerCase()
++    )
++      throw new Error("Wallet account does not match the stored identity");
+ 
      const provider = await CdpEvmWalletProvider.configureWithWallet({
        apiKeyId,
        apiKeySecret,
@@ -6789,7 +7342,7 @@ index cd815a51..1e1b5146 100644
        networkId,
        address: account.address as `0x${string}`,
      });
-@@ -233,9 +240,11 @@ export function createWalletService(config: WalletConfig): WalletService {
+@@ -233,9 +250,11 @@ export function createWalletService(config: WalletConfig): WalletService {
          history = JSON.parse(await fs.readFile(historyPath, "utf-8"));
        } catch {}
        history.push(record);
@@ -6804,7 +7357,7 @@ index cd815a51..1e1b5146 100644
        await fs.writeFile(historyPath, JSON.stringify(history, null, 2), "utf-8");
      } finally {
        await release();
-@@ -257,6 +266,65 @@ export function createWalletService(config: WalletConfig): WalletService {
+@@ -257,6 +276,70 @@ export function createWalletService(config: WalletConfig): WalletService {
    }
  
    return {
@@ -6820,8 +7373,13 @@ index cd815a51..1e1b5146 100644
 +      if (!apiKeyId || !apiKeySecret || !walletSecret)
 +        throw new Error("Missing required CDP credentials");
 +      const cdp = new CdpClient({ apiKeyId, apiKeySecret, walletSecret });
-+      const name = `bitterbot-owner-${network}`;
++      const name = authentication?.accountName ?? `bitterbot-owner-${network}`;
 +      const account = await cdp.evm.getOrCreateAccount({ name });
++      if (
++        authentication?.expectedAddress &&
++        account.address.toLowerCase() !== authentication.expectedAddress.toLowerCase()
++      )
++        throw new Error("Wallet account does not match the stored identity");
 +      validateSoapboxQuote(quote, account.address, network);
 +      validateTransactionAmount(quote.amount_microusdc / 1e6);
 +      await savePersistedWallet({ name, address: account.address, ownerAddress: account.address });

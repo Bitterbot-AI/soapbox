@@ -3,14 +3,16 @@
 Opt-in compute pools for **paid, private, and collective workloads**, implemented in Rust.
 Bitterbot is the first client; the protocol and worker can run independently.
 
-**Release 0.3.0-rc.2 is a trusted pilot, not a public cloud marketplace.** Paid jobs support
+**Release 0.3.0-rc.3 is a trusted pilot, not a public cloud marketplace.** Paid jobs support
 Base Sepolia USDC escrow with fixed operator payouts and confirmed settlement. Mainnet is disabled.
 The original non-redeemable TEST_CREDIT mode remains available for development.
 Storage is an account-scoped temporary artifact service on one coordinator.
 
 The [private desktop wizard release](docs/TEST-RELEASE.md) includes click-to-open setup,
 prerequisite checks and guarded rollback for Bitterbot 1.8.0 on Ubuntu/WSL2. The approved
-GPU runtime remains rc1; the installer and desktop integration are rc2.
+GPU runtime, installer and desktop integration are rc3. Compute is visible and enabled
+by default; enrollment, worker activation and each payment require user action.
+See the [review disposition](docs/RC3-REVIEW-DISPOSITION.md) for the included fixes.
 
 ## What runs today
 
@@ -33,13 +35,12 @@ Start with [Phase 2 isolation and USDC setup](docs/PHASE-2-ISOLATION-PAYMENTS.md
 
 The earlier host-runtime increment is documented in [Phase 2 GPU setup and architecture](docs/PHASE-2-GPU.md) and
 [physical GPU validation](docs/PHASE-2-VALIDATION.md).
-On this machine, run scripts/soapbox-gpu-pilot.ps1 from the sibling bitterbot-desktop
-repository for the complete interactive pilot, or add -TestOnly for automated verification.
+The sibling bitterbot-desktop repository includes `scripts/soapbox-gpu-pilot.ps1`
+for development. Testers should use the packaged desktop wizard.
 
 ## Quick start
 
 Prerequisites: stable Rust and a C toolchain. Node 22+ is needed only for the demo.
-On this development machine, use WSL Ubuntu; the existing Rust toolchain lives there.
 
 ```sh
 cargo build --locked
@@ -61,7 +62,7 @@ Load those settings into the gateway environment and restart the gateway.
 See [the runbook](docs/RUNBOOK.md). Do not commit this file.
 
 If you built into another target directory, set `SOAPBOX_BINARY` to the executable.
-For example, on this machine:
+For example:
 
 ```sh
 SOAPBOX_BINARY=/tmp/soapbox-target/debug/soapbox node scripts/demo.mjs
@@ -89,15 +90,15 @@ CI runs these checks on Linux, macOS, and Windows. Local verification is recorde
 - [Partner pilot briefs](docs/PARTNERS.md)
 
 The repository does not depend on the old Java blockchain or transcoding stack.
-Original Java material in D:\Soapbox remains untouched.
+The original Java repository remains separate.
 
-## Windows demo on this machine
+## Windows development demo
 
-A native development executable has been built and tested at .local/bin/soapbox.exe.
-Run the complete demo from PowerShell:
+Build the native executable with `cargo build --locked`, then run the demo from the
+repository root in PowerShell:
 
 ```powershell
-& D:\Bitterbot\soapbox\scripts\demo.ps1
+.\scripts\demo.ps1
 ```
 
 Add -Keep to leave the demo running for the Bitterbot UI. The script restores your prior

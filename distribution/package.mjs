@@ -1,5 +1,6 @@
 /** Reproducible input selection: no local config, wallet, logs, model cache or databases. */
 import assert from "node:assert/strict";
+import runtime from "./runtime.json" with { type: "json" };
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, cp, readFile, writeFile, readdir, chmod, stat } from "node:fs/promises";
@@ -19,7 +20,7 @@ const { values: v } = parseArgs({
   ),
 });
 const root = path.resolve(import.meta.dirname, "..");
-const version = "0.3.0-rc.2",
+const version = "0.3.0-rc.3",
   name = `soapbox-${version}-linux-x64`,
   destination = path.join(v.output, name);
 assert.ok(v.desktop && v.binary && /^[a-f0-9]{40}$/.test(v["desktop-commit"] ?? ""));
@@ -37,11 +38,11 @@ assert.equal(
   createHash("sha256")
     .update(await readFile(v.runtime))
     .digest("hex"),
-  "03c4c2de8e42032c6710ce0b4f1170d893c2a36b26a0ad88398173cd16ff9588",
-  "Use the approved rc1 runtime archive",
+  runtime.sha256,
+  "Use the approved runtime archive",
 );
 await mkdir(path.join(destination, "runtime"));
-await cp(v.runtime, path.join(destination, "runtime/soapbox-0.3.0-rc.1-linux-x64.tar.gz"));
+await cp(v.runtime, path.join(destination, "runtime", runtime.filename));
 await cp(v["windows-launcher"], path.join(destination, "Soapbox-Setup.exe"));
 await cp(v["linux-launcher"], path.join(destination, "Soapbox-Setup"));
 await chmod(path.join(destination, "Soapbox-Setup"), 0o755);
@@ -78,7 +79,7 @@ await writeFile(
     {
       version,
       installer_version: 2,
-      runtime_version: "0.3.0-rc.1",
+      runtime_version: runtime.version,
       platform: "linux-x64",
       os: "Ubuntu 24.04 / WSL2 Ubuntu 24.04",
       chain_id: 84532,
@@ -109,9 +110,10 @@ execFileSync("python3", [
 const zipHash = createHash("sha256")
   .update(await readFile(path.join(v.output, zipName)))
   .digest("hex");
+await cp(v.runtime, path.join(v.output, runtime.filename));
 await writeFile(
   path.join(v.output, "SHA256SUMS"),
-  `${hash}  ${name}.tar.gz\n${zipHash}  ${zipName}\n`,
+  `${hash}  ${name}.tar.gz\n${zipHash}  ${zipName}\n${runtime.sha256}  ${runtime.filename}\n`,
 );
 console.log(
   JSON.stringify(

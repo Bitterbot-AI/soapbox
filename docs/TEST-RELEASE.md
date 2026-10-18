@@ -1,13 +1,15 @@
-# Soapbox 0.3.0-rc.5 — P2P operator preview
+# Soapbox 0.3.0-rc.6 — Branded Compute preview
 
-This public test release adds one-click GPU operator setup and Compute over Bitterbot's
-existing P2P transport to Bitterbot Desktop 1.8.0 on Ubuntu 24.04 x64 / WSL2 Ubuntu 24.04.
+This public test release adds the original SoapBox wordmark to the Compute dashboard and
+buyer/operator setup wizard, with responsive layout and contrast in both themes. It retains
+rc5's one-click GPU operator setup and existing Bitterbot P2P transport integration for
+Bitterbot Desktop 1.8.0 on Ubuntu 24.04 x64 / WSL2 Ubuntu 24.04.
 Compute remains enabled by default. Paid jobs remain on Base Sepolia (84532), using the
 separate Compute wallet. The installer does not fund jobs or change mainnet wallet data.
 
 ## Install
 
-1. Download the Windows/WSL ZIP or Linux tar.gz from the rc5 GitHub release and extract it.
+1. Download the Windows/WSL ZIP or Linux tar.gz from the rc6 GitHub release and extract it.
 2. Open **Soapbox-Setup.exe** on Windows, or **Soapbox-Setup** on Linux.
 3. Choose Buyer or GPU operator, run the prerequisite checks, and install.
 4. Restart Bitterbot normally so the updated gateway and P2P sidecar load. Open **Compute**.
@@ -49,7 +51,7 @@ per day, with test ETH for gas. Never share private keys or CDP secrets with a c
 Operators joining that pilot select **Connect to an existing coordinator for paid Base Sepolia
 jobs instead**, import their operator enrollment and prepare/activate the runtime. The enrollment
 contains their payout address; no wallet signing key is needed. This is distinct from the local
-private/collective pool. Paid multi-operator execution over P2P is not included in rc5.
+private/collective pool. Paid multi-operator execution over P2P is not included in this release.
 
 ## Rollback
 
@@ -62,7 +64,9 @@ cancelled before rollback. Backups stay under the local `compute` installation d
 
 ## Test scope and limitations
 
-The release includes matching gateway, UI, plugin, Rust P2P sidecar and Rust worker builds.
+The release includes the branded rc6 UI/plugin metadata and the unchanged rc5 gateway,
+plugin executable code, Rust P2P sidecar and Rust worker. The standalone runtime archive
+keeps its rc5 filename and checksum; it is included in both installers and this release.
 Only approved CPU hashing and GPU embedding adapters execute. Discovery, admission, fan-out,
 restart recovery and isolated GPU execution are tested locally. Physical two-machine, NAT/relay
 and fleet-scale acceptance remain separate gates. Relay nodes carrying Compute gossip also need

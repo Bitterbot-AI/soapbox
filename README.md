@@ -3,14 +3,14 @@
 Opt-in compute pools for **paid, private, and collective workloads**, implemented in Rust.
 Bitterbot is the first client; the protocol and worker can run independently.
 
-**Release 0.3.0-rc.5 is a trusted pilot, not a public cloud marketplace.** Paid jobs support
+**Release 0.3.0-rc.6 is a trusted pilot, not a public cloud marketplace.** Paid jobs support
 Base Sepolia USDC escrow with fixed operator payouts and confirmed settlement. Mainnet is disabled.
 The original non-redeemable TEST_CREDIT mode remains available for development.
 Storage is an account-scoped temporary artifact service on one coordinator.
 
 The [desktop wizard release](docs/TEST-RELEASE.md) includes click-to-open setup,
 prerequisite checks and guarded rollback for Bitterbot 1.8.0 on Ubuntu/WSL2. The approved
-installer and desktop integration are rc4; the approved GPU runtime remains rc3. Compute is visible and enabled
+installer and branded desktop integration are rc6; the checksum-pinned GPU runtime remains rc5. Compute is visible and enabled
 by default; enrollment, worker activation and each payment require user action.
 See the [review disposition](docs/RC3-REVIEW-DISPOSITION.md) for the included fixes.
 

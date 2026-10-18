@@ -21,7 +21,7 @@ const { values: v } = parseArgs({
   ),
 });
 const root = path.resolve(import.meta.dirname, "..");
-const version = "0.3.0-rc.5",
+const version = "0.3.0-rc.6",
   name = `soapbox-${version}-linux-x64`,
   destination = path.join(v.output, name);
 assert.ok(v.desktop && v.binary && /^[a-f0-9]{40}$/.test(v["desktop-commit"] ?? ""));

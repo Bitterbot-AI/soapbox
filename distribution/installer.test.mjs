@@ -36,6 +36,9 @@ async function fixture(t) {
     "plugin/index.cjs",
     "plugin/bitterbot.plugin.json",
     "bin/soapbox",
+    "bin/bitterbot-orchestrator",
+    "gateway/entry.js",
+    "gateway/babel.cjs",
     "ui/index.html",
     "setup/install.mjs",
     `runtime/${runtimeName}`,
@@ -54,6 +57,9 @@ async function fixture(t) {
     files,
   });
   await privateJson(path.join(state, "app/current/package.json"), { version: "1.8.0" });
+  await mkdir(path.join(state, "app/current/dist"), { recursive: true });
+  await writeFile(path.join(state, "app/current/dist/entry.js"), "original gateway");
+  await writeFile(path.join(state, "app/current/dist/babel.cjs"), "original transpiler");
   const original = {
     tools: { wallet: { network: "base", walletStorePath: "/mainnet", dailySpendLimitUsd: 5 } },
     agents: { preserve: true },
@@ -223,4 +229,42 @@ test("local installer requires session authentication and rejects foreign Origin
   });
   assert.equal(restored.status, 200);
   assert.deepEqual(await readJson(path.join(f.state, "bitterbot.json")), f.original);
+});
+
+test("gateway and sidecar rollback preserves later edits and restores the exact previous binaries", async (t) => {
+  const f = await fixture(t);
+  const installed = await install({ ...f, apply: true });
+  const entry = path.join(f.state, "app/current/dist/entry.js");
+  assert.equal(await readFile(entry, "utf8"), "fixture");
+  assert.equal((await readJson(path.join(f.state, "bitterbot.json"))).p2p.orchestratorBinary, path.join(installed.target, "bin/bitterbot-orchestrator"));
+  await writeFile(entry, "another update");
+  await assert.rejects(rollback(f.state, installed.target), /Gateway changed/);
+  assert.equal(await readFile(entry, "utf8"), "another update");
+  await writeFile(entry, "fixture");
+  await rollback(f.state, installed.target);
+  assert.equal(await readFile(entry, "utf8"), "original gateway");
+  assert.deepEqual(await readJson(path.join(f.state, "bitterbot.json")), f.original);
+});
+
+test("local operator rollback requires no unfinished jobs and retains operator credentials", async (t) => {
+  const f = await fixture(t);
+  const installed = await install({ ...f, apply: true });
+  const file = path.join(f.state, "bitterbot.json"), config = await readJson(file);
+  const directory = path.join(f.state, "compute/setup/operator-test");
+  await privateJson(path.join(directory, "bitterbot.before.json"), config);
+  let jobs = [{ status: "running" }];
+  const server = createServer((req, res) => {
+    assert.equal(req.headers.authorization, "Bearer fixture-admin");
+    res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ jobs }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  await privateJson(path.join(directory, "mesh-operator.json"), { chain_id: 84532, url: `http://127.0.0.1:${server.address().port}`, admin: "fixture-admin" });
+  config.plugins.entries["soapbox-compute"] = { enabled: true, config: { mode: "mesh-operator", stateDirectory: directory } };
+  await privateJson(file, config);
+  await assert.rejects(rollback(f.state, installed.target), /pending jobs/);
+  jobs = [];
+  await rollback(f.state, installed.target);
+  assert.deepEqual(await readJson(file), f.original);
+  assert.equal((await readJson(path.join(directory, "mesh-operator.json"))).admin, "fixture-admin");
 });

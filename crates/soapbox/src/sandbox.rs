@@ -107,20 +107,46 @@ pub fn arguments(name: &str, cfg: &SandboxConfig, cpu: u32, memory: u64, gpu: bo
     ]);
     args
 }
+/// A host-wide reservation held before advertising GPU capacity or claiming work.
+pub(crate) struct GpuReservation {
+    _file: std::fs::File,
+    path: PathBuf,
+}
+pub(crate) fn reserve_gpu(cfg: &SandboxConfig) -> Result<GpuReservation> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&cfg.gpu_lock)?;
+    fs2::FileExt::try_lock_exclusive(&file)
+        .context("GPU already leased by another Soapbox worker")?;
+    Ok(GpuReservation {
+        _file: file,
+        path: cfg.gpu_lock.clone(),
+    })
+}
 pub async fn execute(job: Option<&Job>, config: &WorkerConfig) -> Result<Value> {
+    execute_reserved(job, config, None).await
+}
+pub(crate) async fn execute_reserved(
+    job: Option<&Job>,
+    config: &WorkerConfig,
+    reservation: Option<&GpuReservation>,
+) -> Result<Value> {
     let cfg = config.sandbox.as_ref().context("sandbox required")?;
     cfg.validate()?;
     let gpu = job.is_none_or(|j| matches!(j.spec.workload, Workload::Embeddings { .. }));
     let _lock = if gpu {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&cfg.gpu_lock)?;
-        fs2::FileExt::try_lock_exclusive(&file)
-            .context("GPU already leased by another Soapbox worker")?;
-        Some(file)
+        if let Some(held) = reservation {
+            ensure!(
+                held.path == cfg.gpu_lock,
+                "GPU reservation belongs to another device"
+            );
+            None
+        } else {
+            Some(reserve_gpu(cfg)?)
+        }
     } else {
         None
     };
@@ -309,6 +335,19 @@ fn verify_boundary(request: &Input) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gpu_reservation_excludes_other_workers_until_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = SandboxConfig {
+            image: format!("sha256:{}", "a".repeat(64)),
+            models: dir.path().into(),
+            gpu_lock: dir.path().join("gpu.lock"),
+        };
+        let first = reserve_gpu(&cfg).unwrap();
+        assert!(reserve_gpu(&cfg).is_err());
+        drop(first);
+        assert!(reserve_gpu(&cfg).is_ok());
+    }
     #[test]
     fn sandbox_has_no_host_access_and_requires_immutable_image() {
         let cfg = SandboxConfig {

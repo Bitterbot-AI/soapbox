@@ -11,6 +11,7 @@ const { values: v } = parseArgs({
     [
       "desktop",
       "binary",
+      "orchestrator",
       "output",
       "desktop-commit",
       "runtime",
@@ -20,7 +21,7 @@ const { values: v } = parseArgs({
   ),
 });
 const root = path.resolve(import.meta.dirname, "..");
-const version = "0.3.0-rc.4",
+const version = "0.3.0-rc.5",
   name = `soapbox-${version}-linux-x64`,
   destination = path.join(v.output, name);
 assert.ok(v.desktop && v.binary && /^[a-f0-9]{40}$/.test(v["desktop-commit"] ?? ""));
@@ -30,10 +31,13 @@ const build = JSON.parse(await readFile(path.join(v.desktop, "build.json"), "utf
 await mkdir(path.join(destination, "plugin"), { recursive: true });
 for (const file of ["index.cjs", "buyer-wallet.cjs", "package.json", "bitterbot.plugin.json"])
   await cp(path.join(v.desktop, "plugin", file), path.join(destination, "plugin", file));
+await cp(path.join(v.desktop, "gateway"), path.join(destination, "gateway"), { recursive: true });
 await cp(path.join(v.desktop, "ui"), path.join(destination, "ui"), { recursive: true });
 await mkdir(path.join(destination, "bin"), { recursive: true });
 await cp(v.binary, path.join(destination, "bin/soapbox"));
 await chmod(path.join(destination, "bin/soapbox"), 0o755);
+await cp(v.orchestrator, path.join(destination, "bin/bitterbot-orchestrator"));
+await chmod(path.join(destination, "bin/bitterbot-orchestrator"), 0o755);
 assert.equal(
   createHash("sha256")
     .update(await readFile(v.runtime))

@@ -244,9 +244,13 @@ async fn inventory_cached(
     }
     Ok(offer)
 }
-async fn execute(job: &Job, config: &WorkerConfig) -> Result<Value> {
+async fn execute(
+    job: &Job,
+    config: &WorkerConfig,
+    reservation: Option<&crate::sandbox::GpuReservation>,
+) -> Result<Value> {
     if config.sandbox.is_some() {
-        return crate::sandbox::execute(Some(job), config).await;
+        return crate::sandbox::execute_reserved(Some(job), config, reservation).await;
     }
     ensure!(
         config.allow_unsafe_host && job.payment.is_none(),
@@ -274,7 +278,7 @@ pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<
         tokio::pin!(probe);
         let mut heartbeat = tokio::time::interval(Duration::from_secs(8));
         heartbeat.tick().await;
-        let offer = loop {
+        let mut offer = loop {
             tokio::select! {
                 result = &mut probe => break result?,
                 _ = heartbeat.tick() => {
@@ -296,13 +300,34 @@ pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<
                 .clone()
                 .map(|runtime| (std::time::Instant::now(), runtime));
         }
+        // A cached probe is not an exclusive reservation. Hold the same host lock
+        // from admission through execution so another coordinator's worker cannot
+        // consume the device between registration and claim.
+        let gpu_reservation = if offer.gpu_observed {
+            if let Some(sandbox) = &config.sandbox {
+                match crate::sandbox::reserve_gpu(sandbox) {
+                    Ok(held) => Some(held),
+                    Err(error) => {
+                        offer.gpu_observed = false;
+                        offer.models.clear();
+                        offer.runtime = None;
+                        offer.gpu_unavailable_reason = Some(error.to_string());
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         client.post::<Value>("/v1/workers/register", &offer).await?;
         if let Some(job) = client
             .post::<Option<Job>>("/v1/workers/claim", json!({}))
             .await?
         {
             let lease = job.lease_id.clone().context("lease missing")?;
-            let execution = execute(&job, &config);
+            let execution = execute(&job, &config, gpu_reservation.as_ref());
             tokio::pin!(execution);
             let mut ticker = tokio::time::interval(Duration::from_secs(8));
             ticker.tick().await;
@@ -355,6 +380,7 @@ pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<
                 }
             }
         }
+        drop(gpu_reservation);
         if once {
             return Ok(());
         }

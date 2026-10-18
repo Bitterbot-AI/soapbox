@@ -16,6 +16,7 @@ impl Store {
         let db = Connection::open(path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+            CREATE TABLE IF NOT EXISTS mesh_admissions(id TEXT PRIMARY KEY,token_hash TEXT UNIQUE NOT NULL,principal TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS meta(version INTEGER NOT NULL);
             INSERT INTO meta SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM meta);
             CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, owner TEXT NOT NULL, idem TEXT NOT NULL,

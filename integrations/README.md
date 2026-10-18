@@ -1,13 +1,51 @@
-# Bitterbot desktop integration source
+# Bitterbot Desktop integration
 
-The patch contains the Compute plugin, buyer/operator UI, wallet isolation, installer builder and tests. Apply it to Bitterbot desktop commit `df38874f18912865e299a657e50a874be1cb334a` with `git apply --index bitterbot-desktop.patch`. It is maintained in the desktop repository; this snapshot makes the private prerelease reproducible.
+The rc5 integration is maintained in the public
+[Bitterbot Desktop repository](https://github.com/Bitterbot-AI/bitterbot-desktop).
+Its exact source revision is recorded as `desktop_commit` in each package's `release.json`.
+The included `bitterbot-desktop.patch` is a source snapshot against desktop commit
+`df38874f18912865e299a657e50a874be1cb334a`. Apply it with `git apply --index` to that revision,
+or check out the recorded desktop commit directly.
 
-Build the desktop overlay against the exact installed release source with `node scripts/build-soapbox-integration.mjs /path/to/release-source`. This package targets Bitterbot 1.8.0 (`619ca967`, tag `v1.8.0`). Dependencies must be installed in both source checkouts. Then use `distribution/package.mjs` in Soapbox with the resulting `dist/soapbox-integration`, the release Rust binary, an output directory and the integration commit hash.
+## Build the matching application overlay
 
-## Desktop setup preview
+This release supports Bitterbot 1.8.0, whose source is tag `v1.8.0`, commit
+`619ca967fe4d8a75142ec064ba00bb917efd3012`. Install dependencies in both the integration
+checkout and the supported release checkout, including their desktop workspaces. Use
+Node.js 22, Python 3, Git, GNU tar/gzip, and the repository's pinned Rust toolchain.
 
-The integration snapshot at desktop commit `268c765e84b233312e3924c427dbfba46c5ba57c` supplies **Compute → Set up buyer or operator** and preparation of the included, checksum-pinned GPU runtime. The private **v0.3.0-rc.4** release packages this UI/plugin with click-to-open Windows/WSL and Ubuntu launchers, prerequisite checks and guarded rollback. See [the installer guide](../docs/TEST-RELEASE.md).
+From the integration checkout, run:
 
-Buyers initialize a separate Base Sepolia wallet; operators import scoped enrollment and prepare the bundled runtime without a second download. Compute stays enabled and visible by default. Activation and funding require deliberate user actions. The plugin owns its gateway methods, funding requires admin authorization and approval of the displayed quote, and the approved escrow and runtime are pinned by this release. The rc4 plugin corrects the Base Sepolia escrow bytecode pin and adds a release-policy regression test. The Rust runtime, UI and launchers are unchanged from rc3. All payments remain testnet-only. This is a private add-on for Bitterbot 1.8.0.
+```sh
+node scripts/build-soapbox-p2p-release.mjs /path/to/bitterbot-1.8.0-source
+```
 
-See [the review disposition](../docs/RC3-REVIEW-DISPOSITION.md) for the corrections and remaining milestones. Rebuild the runtime with `cargo build --release --locked -p soapbox`; the archive contains `bin/soapbox`, `containers/Dockerfile`, `LICENSE`, and `provenance.json` beneath the directory named in `distribution/runtime.json`. The package builder verifies the approved runtime archive digest. Build the Ubuntu launcher with `rustc --edition 2021 -D warnings distribution/launcher.rs -o Soapbox-Setup`. Build the Windows launcher with the same source and `--target x86_64-pc-windows-gnu -o Soapbox-Setup.exe` (the Rust target and MinGW linker must be installed). Then supply `--desktop`, `--binary`, `--output`, `--desktop-commit`, `--runtime`, `--windows-launcher` and `--linux-launcher` to `distribution/package.mjs`.
+The builder stages the supported release, applies the Compute changes, and builds matching
+gateway, plugin and UI outputs into `dist/soapbox-integration`. It preserves the supported
+release's existing non-Compute features instead of replacing them with the older integration
+checkout. The build requires the fixed rc4 comparison commit `268c765e` in local Git history.
+
+Build Soapbox with `cargo build --release --locked -p soapbox`. Build the desktop repository's
+P2P sidecar with `cargo build --release --locked` in `orchestrator/`. The runtime archive contains
+`bin/soapbox`, `containers/`, `LICENSE` and source-hash `provenance.json` under the directory
+named by `distribution/runtime.json`. The package builder verifies the archive's approved
+SHA-256. Rebuilt binaries may differ with compiler/environment changes; a changed archive
+requires updating and reviewing both the runtime manifest and the desktop runtime pin.
+
+Build the native launchers from `distribution/launcher.rs` with `rustc --edition 2021 -D warnings`;
+the Windows build additionally uses `--target x86_64-pc-windows-gnu` and a MinGW linker.
+Run `distribution/package.mjs` with `--desktop`, `--binary`, `--orchestrator`, `--output`,
+`--desktop-commit`, `--runtime`, `--windows-launcher` and `--linux-launcher`.
+
+## Operator and buyer behavior
+
+**Compute → Set up buyer or operator → GPU operator → Enable this GPU operator** prepares
+and verifies the isolated runtime, then activates a supervised local coordinator and worker.
+Private and collective P2P work needs no wallet or enrollment file. Operators explicitly grant
+peer IDs access to their pools/projects. Discovery and execution use the existing Bitterbot
+P2P identity and transport.
+
+The advanced coordinator-enrollment path retains the paid Base Sepolia pilot. Buyers use a
+separate Compute wallet and approve each quote. Compute remains visible and enabled by
+default. Paid P2P fan-out is not included. See [setup and rollback](../docs/TEST-RELEASE.md)
+and [rc5 validation](../docs/RC5-RELEASE-VALIDATION.md) for the tested scope.

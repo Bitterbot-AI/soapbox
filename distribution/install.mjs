@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import runtime from "./runtime.json" with { type: "json" };
+import { stageGateway, applyGateway, validateGateway } from "./gateway-overlay.mjs";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
@@ -25,8 +27,8 @@ const exec = promisify(execFile);
 export const sha = (b) => createHash("sha256").update(b).digest("hex");
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const within = (root, file) => path.resolve(file).startsWith(path.resolve(root) + path.sep);
-export const runtimeName = "soapbox-runtime-0.3.0-rc.3-linux-x64.tar.gz";
-export const runtimeHash = "03c4c2de8e42032c6710ce0b4f1170d893c2a36b26a0ad88398173cd16ff9588";
+export const runtimeName = runtime.filename;
+export const runtimeHash = runtime.sha256;
 export async function verifyRelease(release) {
   const meta = await readJson(path.join(release, "release.json"));
   assert.equal(meta.chain_id, 84532, "Release must use Base Sepolia");
@@ -47,6 +49,9 @@ export async function verifyRelease(release) {
     "plugin/index.cjs",
     "plugin/bitterbot.plugin.json",
     "bin/soapbox",
+    "bin/bitterbot-orchestrator",
+    "gateway/entry.js",
+    "gateway/babel.cjs",
     "ui/index.html",
     "setup/install.mjs",
     `runtime/${runtimeName}`,
@@ -209,12 +214,14 @@ export async function install({ release, state, role = "buyer", apply = false, f
       config = JSON.parse(before),
       target = path.join(state, "compute", `soapbox-${plan.version}-${randomUUID()}`);
     await mkdir(target, { recursive: true, mode: 0o700 });
-    for (const dir of ["plugin", "ui", "bin", "runtime"])
+    for (const dir of ["plugin", "ui", "bin", "runtime", "gateway"])
       await cp(path.join(release, dir), path.join(target, dir), { recursive: true });
     await chmod(path.join(target, "bin/soapbox"), 0o755);
+    await chmod(path.join(target, "bin/bitterbot-orchestrator"), 0o755);
+    const gateway = await stageGateway(state, target);
     const meta = await verifyRelease(release);
     for (const [name, hash] of Object.entries(meta.files))
-      if (/^(plugin|ui|bin|runtime)\//.test(name))
+      if (/^(plugin|ui|bin|runtime|gateway)\//.test(name))
         assert.equal(sha(await readFile(path.join(target, name))), hash);
     config.plugins ??= {};
     config.plugins.load ??= {};
@@ -229,7 +236,7 @@ export async function install({ release, state, role = "buyer", apply = false, f
     const existing = config.plugins.entries["soapbox-compute"];
     const active =
       existing?.config &&
-      (["participant", "pilot"].includes(existing.config.mode) || existing.config.repository);
+      (["participant", "pilot", "mesh-operator"].includes(existing.config.mode) || existing.config.repository);
     config.plugins.entries["soapbox-compute"] = active
       ? existing
       : {
@@ -241,6 +248,7 @@ export async function install({ release, state, role = "buyer", apply = false, f
         };
     if (Array.isArray(config.plugins.allow) && !config.plugins.allow.includes("soapbox-compute"))
       config.plugins.allow.push("soapbox-compute");
+    config.p2p = { ...config.p2p, enabled: true, orchestratorBinary: path.join(target, "bin/bitterbot-orchestrator") };
     config.gateway ??= {};
     config.gateway.controlUi = {
       ...config.gateway.controlUi,
@@ -257,6 +265,7 @@ export async function install({ release, state, role = "buyer", apply = false, f
       target,
       removed,
       config_sha256: sha(after),
+      gateway,
       chain_id: 84532,
     });
     assert.equal(
@@ -264,8 +273,9 @@ export async function install({ release, state, role = "buyer", apply = false, f
       before,
       "Settings changed during installation; retry",
     );
-    await atomicText(file, after);
     await privateJson(path.join(state, "compute/installer-latest.json"), { target });
+    await applyGateway(gateway, target);
+    try { await atomicText(file, after); } catch (error) { await applyGateway(gateway, target, true); throw error; }
     return { ...plan, installed: true, target, main_wallet_changed: false };
   });
 }
@@ -303,7 +313,7 @@ export async function rollback(state, target) {
     const beforeText = await readFile(path.join(target, "before-config.json"), "utf8"),
       before = JSON.parse(beforeText),
       installed = await readJson(path.join(target, "after-config.json"));
-    if (same(current, before)) return { rolled_back: true };
+    if (same(current, before)) { if (info.gateway) await applyGateway(info.gateway, target, true); return { rolled_back: true }; }
     assert.equal(
       current.gateway?.controlUi?.root,
       path.join(target, "ui"),
@@ -316,11 +326,7 @@ export async function rollback(state, target) {
         "setup",
         "Existing Compute configuration changed; resolve it before rollback",
       );
-      assert.equal(
-        entry?.config?.mode,
-        "participant",
-        "Compute configuration changed outside the wizard",
-      );
+      assert.ok(["participant", "mesh-operator"].includes(entry?.config?.mode), "Compute configuration changed outside the wizard");
       assert.ok(within(path.join(state, "compute/setup"), entry.config.stateDirectory));
       const backup = await readJson(
         path.join(entry.config.stateDirectory, "bitterbot.before.json"),
@@ -329,10 +335,11 @@ export async function rollback(state, target) {
         backup.plugins.entries["soapbox-compute"],
         installed.plugins.entries["soapbox-compute"],
       );
-      const connection = await readJson(path.join(entry.config.stateDirectory, "connection.json"));
+      const local = entry.config.mode === "mesh-operator";
+      const connection = await readJson(path.join(entry.config.stateDirectory, local ? "mesh-operator.json" : "connection.json"));
       assert.equal(connection.chain_id, 84532);
       const response = await fetch(new URL("/v1/status", connection.url), {
-        headers: { Authorization: "Bearer " + connection.token },
+        headers: { Authorization: "Bearer " + (local ? connection.admin : connection.token) },
         redirect: "error",
         signal: AbortSignal.timeout(10000),
       });
@@ -352,6 +359,7 @@ export async function rollback(state, target) {
         "Finish or cancel pending jobs and wait for settlement before rollback",
       );
     }
+    if (info.gateway) await validateGateway(info.gateway, target, true);
     const restored = structuredClone(current),
       prior = before.plugins?.entries?.["soapbox-compute"];
     if (prior === undefined) delete restored.plugins.entries["soapbox-compute"];
@@ -380,16 +388,24 @@ export async function rollback(state, target) {
     ])
       if (priorValue === undefined && parent[key] && Object.keys(parent[key]).length === 0)
         delete parent[key];
+    for (const key of ["enabled", "orchestratorBinary"]) {
+      assert.equal(current.p2p?.[key], installed.p2p?.[key], "P2P configuration changed outside the installer");
+      if (before.p2p?.[key] === undefined) delete restored.p2p?.[key];
+      else restored.p2p[key] = before.p2p[key];
+    }
+    if (!before.p2p && restored.p2p && Object.keys(restored.p2p).length === 0) delete restored.p2p;
     assert.deepEqual(restored.tools, current.tools);
     assert.equal(
       await readFile(file, "utf8"),
       currentText,
       "Settings changed during rollback; retry",
     );
-    await atomicText(
+    if (info.gateway) await applyGateway(info.gateway, target, true);
+    try { await atomicText(
       file,
       same(restored, before) ? beforeText : JSON.stringify(restored, null, 2) + "\n",
     );
+    } catch (error) { if (info.gateway) await applyGateway(info.gateway, target); throw error; }
     return { rolled_back: true, main_wallet_changed: false };
   });
 }

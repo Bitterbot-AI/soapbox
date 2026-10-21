@@ -17,6 +17,7 @@ impl Store {
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
             CREATE TABLE IF NOT EXISTS mesh_admissions(id TEXT PRIMARY KEY,token_hash TEXT UNIQUE NOT NULL,principal TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS mesh_cancellations(owner TEXT NOT NULL,idem TEXT NOT NULL,at INTEGER NOT NULL,PRIMARY KEY(owner,idem));
             CREATE TABLE IF NOT EXISTS meta(version INTEGER NOT NULL);
             INSERT INTO meta SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM meta);
             CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, owner TEXT NOT NULL, idem TEXT NOT NULL,
@@ -35,7 +36,10 @@ impl Store {
             CREATE INDEX IF NOT EXISTS artifacts_owner ON artifacts(owner);
         ")?;
         let version: i64 = db.query_row("SELECT version FROM meta", [], |r| r.get(0))?;
-        anyhow::ensure!(version == 1, "unsupported database schema");
+        anyhow::ensure!(version == 1 || version == 2, "unsupported database schema");
+        // Older runtimes must refuse this database rather than silently ignore
+        // cancellation fences. Upgrade before accepting any cancellation.
+        db.execute("UPDATE meta SET version=2 WHERE version=1", [])?;
         Ok(Self {
             payments: None,
             db,
@@ -152,6 +156,16 @@ impl Store {
             return Err(UserFacing::forbidden("pool/project membership required").into());
         }
         spec.validate()?;
+        // A cancellation may win before a delayed/retried enqueue arrives. Its
+        // tombstone and any affected job are committed together below.
+        if p.id.starts_with("mesh_") {
+            let cancelled: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM mesh_cancellations WHERE owner=?1 AND idem=?2)",
+                params![p.id, spec.idempotency_key],
+                |r| r.get(0),
+            )?;
+            ensure!(!cancelled, "workload intent was cancelled");
+        }
         ensure!(
             !spec.idempotency_key.is_empty() && spec.idempotency_key.len() <= 128,
             "invalid idempotency key"
@@ -485,6 +499,73 @@ impl Store {
         save(&tx, &job)?;
         tx.commit()?;
         Ok(job)
+    }
+    /// Trusted gateway cancellation, bound to the authenticated P2P public key.
+    /// It grants no admission and returns neither inputs nor results. In contrast
+    /// to replaying submit, it cannot create work, even after re-admission.
+    pub fn cancel_mesh_intent(&mut self, public_key: &str, key: &str, at: i64) -> Result<Value> {
+        ensure!(
+            public_key.len() == 64
+                && public_key
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "invalid public key"
+        );
+        let intent = key.strip_prefix("mesh-").and_then(|s| s.rsplit_once('-'));
+        ensure!(
+            intent.is_some_and(|(batch, shard)| Uuid::parse_str(batch)
+                .is_ok_and(|id| id.to_string() == batch)
+                && shard
+                    .parse::<u32>()
+                    .is_ok_and(|n| n < 512 && n.to_string() == shard)),
+            "invalid mesh intent"
+        );
+        let owner = format!("mesh_{public_key}");
+        let tx = self.db.transaction()?;
+        let data: Option<String> = tx
+            .query_row(
+                "SELECT data FROM jobs WHERE owner=?1 AND idem=?2",
+                params![owner, key],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let mut job: Option<Job> = data.map(|s| serde_json::from_str(&s)).transpose()?;
+        if let Some(ref j) = job {
+            ensure!(
+                matches!(j.spec.mode, Mode::Private { .. } | Mode::Collective { .. }),
+                "mesh cancellation requires free work"
+            );
+        }
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM mesh_cancellations WHERE owner=?1 AND idem=?2)",
+            params![owner, key],
+            |r| r.get(0),
+        )?;
+        if !exists && job.is_none() {
+            // Bound storage for peers with no admission. Existing jobs and
+            // idempotent cancellation retries always remain cancellable.
+            let own: u64 = tx.query_row(
+                "SELECT COUNT(*) FROM mesh_cancellations WHERE owner=?1",
+                [&owner],
+                |r| r.get(0),
+            )?;
+            let total: u64 =
+                tx.query_row("SELECT COUNT(*) FROM mesh_cancellations", [], |r| r.get(0))?;
+            ensure!(
+                own < 4096 && total < 65536,
+                "cancellation journal capacity reached"
+            );
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO mesh_cancellations(owner,idem,at) VALUES(?1,?2,?3)",
+            params![owner, key, at],
+        )?;
+        if let Some(ref mut j) = job {
+            cancel_active(&tx, j, at)?;
+        }
+        let receipt = json!({"idempotency_key":key,"job_id":job.as_ref().map(|j| &j.id),"status":job.as_ref().map_or("cancelled", |j| j.status.as_str())});
+        tx.commit()?;
+        Ok(receipt)
     }
     pub fn cancel(&mut self, p: &Principal, id: &str, at: i64) -> Result<Job> {
         let tx = self.db.transaction()?;

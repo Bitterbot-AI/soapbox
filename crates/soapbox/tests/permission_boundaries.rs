@@ -53,6 +53,142 @@ fn store() -> Store {
     Store::open(std::path::Path::new(":memory:"), 100, 1048576).unwrap()
 }
 
+fn intent(n: u32) -> String {
+    format!("mesh-00000000-0000-4000-8000-000000000000-{n}")
+}
+
+#[test]
+fn upgrades_legacy_database_and_fences_unsafe_runtime_downgrades() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("upgrade.sqlite");
+    let db = rusqlite::Connection::open(&file).unwrap();
+    db.execute_batch("CREATE TABLE meta(version INTEGER NOT NULL); INSERT INTO meta VALUES(1);")
+        .unwrap();
+    drop(db);
+    let s = Store::open(&file, 100, 1048576).unwrap();
+    assert_eq!(
+        s.db.query_row("SELECT version FROM meta", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    s.db.execute("UPDATE meta SET version=999", []).unwrap();
+    drop(s);
+    assert!(Store::open(&file, 100, 1048576).is_err());
+}
+
+#[test]
+fn cancellation_before_enqueue_survives_restart_and_readmission_without_creating_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("cancel.sqlite");
+    let key = "ab".repeat(32);
+    let token = "cd".repeat(32);
+    let mut s = Store::open(&file, 100, 1048576).unwrap();
+    let receipt = s.cancel_mesh_intent(&key, &intent(0), now()).unwrap();
+    assert_eq!(receipt["status"], "cancelled");
+    assert!(receipt["job_id"].is_null());
+    drop(s);
+    let mut s = Store::open(&file, 100, 1048576).unwrap();
+    let p = admit(&mut s, &["team"], &[], &token);
+    assert!(s
+        .submit_authenticated(
+            &p,
+            &digest(token.as_bytes()),
+            private(&intent(0), "team"),
+            now()
+        )
+        .is_err());
+    s.revoke_admission(&key).unwrap();
+    let p = admit(&mut s, &["team"], &[], &"ef".repeat(32));
+    assert!(s.submit(&p, private(&intent(0), "team"), now()).is_err());
+    assert_eq!(
+        s.cancel_mesh_intent(&key, &intent(0), now()).unwrap(),
+        receipt
+    );
+    assert!(s.jobs(&p).unwrap().is_empty());
+    assert_eq!(
+        s.db.query_row("SELECT COUNT(*) FROM ledger", [], |r| r.get::<_, u64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn intent_cancellation_fences_running_work_and_reconciles_after_revoke_without_regrant() {
+    let mut s = store();
+    let token = "cd".repeat(32);
+    let key = "ab".repeat(32);
+    let p = admit(&mut s, &["team"], &[], &token);
+    let job = s.submit(&p, private(&intent(1), "team"), now()).unwrap();
+    let w = worker(&mut s);
+    let lease = s.claim(&w, now()).unwrap().unwrap();
+    let reply = s.cancel_mesh_intent(&key, &intent(1), now()).unwrap();
+    assert_eq!(reply["job_id"], job.id);
+    assert_eq!(reply["status"], "cancelled");
+    assert!(s.complete(&w, &job.id, completion(&lease), now()).is_err());
+    assert!(s
+        .renew(&w, &job.id, lease.lease_id.as_ref().unwrap(), now())
+        .is_err());
+    let queued = s.submit(&p, private(&intent(2), "team"), now()).unwrap();
+    s.revoke_admission(&key).unwrap();
+    let reply = s.cancel_mesh_intent(&key, &intent(2), now()).unwrap();
+    assert_eq!(reply["status"], "cancelled");
+    assert_eq!(reply["job_id"], queued.id);
+    assert!(s
+        .mesh_identity(&digest(token.as_bytes()))
+        .unwrap()
+        .is_none());
+    assert!(reply.get("result").is_none() && reply.get("spec").is_none());
+}
+
+#[test]
+fn cancellation_is_atomic_owner_scoped_and_preserves_completed_work() {
+    let mut s = store();
+    let key = "ab".repeat(32);
+    let p = admit(&mut s, &["team"], &[], &"cd".repeat(32));
+    let j = s.submit(&p, private(&intent(3), "team"), now()).unwrap();
+    s.cancel_mesh_intent(&"aa".repeat(32), &intent(3), now())
+        .unwrap();
+    assert_eq!(s.job(&j.id).unwrap().status, "queued");
+    s.db.execute_batch("CREATE TRIGGER reject_intent_cancel BEFORE UPDATE ON jobs WHEN NEW.status='cancelled' BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+    assert!(s.cancel_mesh_intent(&key, &intent(3), now()).is_err());
+    assert_eq!(
+        s.db.query_row(
+            "SELECT COUNT(*) FROM mesh_cancellations WHERE owner=?1",
+            [&p.id],
+            |r| r.get::<_, u64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    s.db.execute_batch("DROP TRIGGER reject_intent_cancel")
+        .unwrap();
+    let w = worker(&mut s);
+    let lease = s.claim(&w, now()).unwrap().unwrap();
+    s.complete(&w, &j.id, completion(&lease), now()).unwrap();
+    let result = s.job(&j.id).unwrap().result;
+    let reply = s.cancel_mesh_intent(&key, &intent(3), now()).unwrap();
+    assert_eq!(reply["status"], "succeeded");
+    assert_eq!(s.job(&j.id).unwrap().result, result);
+}
+
+#[test]
+fn missing_intent_journal_is_bounded_but_existing_jobs_remain_cancellable() {
+    let mut s = store();
+    let key = "ab".repeat(32);
+    let p = admit(&mut s, &["team"], &[], &"cd".repeat(32));
+    let job = s.submit(&p, private(&intent(4), "team"), now()).unwrap();
+    s.db.execute("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<4096) INSERT INTO mesh_cancellations SELECT ?1,printf('fixture-%d',x),0 FROM n", [&p.id]).unwrap();
+    assert!(s.cancel_mesh_intent(&key, &intent(5), now()).is_err());
+    assert_eq!(
+        s.cancel_mesh_intent(&key, &intent(4), now()).unwrap()["job_id"],
+        job.id
+    );
+    assert_eq!(
+        s.cancel_mesh_intent(&key, &intent(4), now()).unwrap()["status"],
+        "cancelled"
+    );
+}
+
 #[test]
 fn current_scope_cancels_queued_and_running_but_preserves_retained_scope() {
     let mut s = store();

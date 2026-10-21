@@ -46,6 +46,23 @@ their existing provisioning model. Paid mode remains unavailable to mesh peers;
 the Base Sepolia payment and dedicated-wallet policies are unchanged. This is an
 rc7 runtime update; upgrade the gateway and runtime together. Older archives do not contain these fixes.
 
+### Cancellation fences (rc8)
+
+The admin-only `POST /v1/admissions/{publicKeyHex}/cancel` endpoint records an
+owner-bound mesh idempotency key and cancels matching free work in one transaction.
+It returns only the key, optional job ID and terminal status. The matching gateway
+binds the public key to the authenticated P2P peer, including after revocation.
+No grant or submission is needed. Late enqueue is rejected after restart or
+re-admission; already completed effects are not undone. Missing-job fences are
+limited to 4,096 per owner and 65,536 overall; existing jobs and repeated cancels
+remain cancellable when that limit is reached. Fences are not expired automatically.
+
+Rc8 upgrades the coordinator database to schema 2 so older runtimes refuse it
+instead of ignoring cancellation fences. Upgrade gateway and runtime together.
+Downgrading the desktop to an rc7 bundle stops local operator compatibility;
+reinstall rc8 or newer to resume. Never delete the database or restore a snapshot
+that predates cancellation acknowledgements to bypass this protection.
+
 The coordinator may use its own keyed RPC endpoint, but participant enrollment
 exports only the public Base Sepolia endpoint. Keyed/custom endpoints in incoming
 participant enrollment are rejected. Request errors and payment observation

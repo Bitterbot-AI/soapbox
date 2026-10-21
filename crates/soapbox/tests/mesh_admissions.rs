@@ -26,7 +26,11 @@ async fn call(router: &axum::Router, token: &str, path: &str, body: Option<Value
         .unwrap();
     let status = response.status().as_u16();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap())
+    (
+        status,
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned())),
+    )
 }
 #[tokio::test]
 async fn runtime_peer_admission_enforces_roles_scope_owner_paid_block_and_revocation() {
@@ -69,6 +73,52 @@ async fn runtime_peer_admission_enforces_roles_scope_owner_paid_block_and_revoca
     assert_eq!(
         call(&router, &token, "/v1/admissions", Some(grant)).await.0,
         403
+    );
+    let cancel_path = format!("/v1/admissions/{key}/cancel");
+    let intent = "mesh-00000000-0000-4000-8000-000000000000-0";
+    assert_eq!(
+        call(
+            &router,
+            &token,
+            &cancel_path,
+            Some(json!({"idempotency_key":intent}))
+        )
+        .await
+        .0,
+        403
+    );
+    assert_eq!(
+        call(
+            &router,
+            admin,
+            &cancel_path,
+            Some(json!({"idempotency_key":intent}))
+        )
+        .await
+        .0,
+        200
+    );
+    assert_ne!(
+        call(
+            &router,
+            admin,
+            &cancel_path,
+            Some(json!({"idempotency_key":"arbitrary"}))
+        )
+        .await
+        .0,
+        200
+    );
+    assert_ne!(
+        call(
+            &router,
+            admin,
+            &cancel_path,
+            Some(json!({"idempotency_key":intent,"owner":"other"}))
+        )
+        .await
+        .0,
+        200
     );
     let spec = json!({"idempotency_key":"test","mode":{"kind":"private","pool_id":"team"},"workload":{"kind":"sha256","texts":["private input"]}});
     let (status, job) = call(&router, &token, "/v1/jobs", Some(spec.clone())).await;

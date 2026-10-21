@@ -44,7 +44,7 @@ GPU cancellation is still bounded by worker/runtime behavior, not this API check
 This applies to dynamic mesh admissions. Static coordinator principals keep
 their existing provisioning model. Paid mode remains unavailable to mesh peers;
 the Base Sepolia payment and dedicated-wallet policies are unchanged. This is an
-unreleased source update; older runtime archives must be replaced when packaging.
+rc7 runtime update; upgrade the gateway and runtime together. Older archives do not contain these fixes.
 
 The coordinator may use its own keyed RPC endpoint, but participant enrollment
 exports only the public Base Sepolia endpoint. Keyed/custom endpoints in incoming

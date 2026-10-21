@@ -117,6 +117,36 @@ impl Store {
         self.balance(id)
     }
     pub fn submit(&mut self, p: &Principal, spec: Submit, at: i64) -> Result<Job> {
+        self.submit_inner(p, None, spec, at)
+    }
+    /// HTTP callers must bind the current admission to the authenticated credential.
+    /// The uncredentialed entry point is for trusted in-process callers only.
+    pub fn submit_authenticated(
+        &mut self,
+        p: &Principal,
+        credential_hash: &str,
+        spec: Submit,
+        at: i64,
+    ) -> Result<Job> {
+        self.submit_inner(p, Some(credential_hash), spec, at)
+    }
+    fn submit_inner(
+        &mut self,
+        p: &Principal,
+        credential_hash: Option<&str>,
+        spec: Submit,
+        at: i64,
+    ) -> Result<Job> {
+        let tx = self.db.transaction()?;
+        // Never authorize queued work from the middleware's captured scope.
+        let current = current_mesh_principal(&tx, &p.id, credential_hash)?;
+        let p = if p.id.starts_with("mesh_") {
+            current
+                .as_ref()
+                .ok_or_else(|| UserFacing::forbidden("peer admission no longer valid"))?
+        } else {
+            p
+        };
         ensure!(p.has("submitter"), "submitter role required");
         if !p.permits(&spec.mode) {
             return Err(UserFacing::forbidden("pool/project membership required").into());
@@ -134,7 +164,6 @@ impl Store {
         if matches!(spec.workload, Workload::Sha256 { .. }) {
             ensure!(!spec.resources.require_gpu, "SHA-256 is a CPU workload");
         }
-        let tx = self.db.transaction()?;
         let existing: Option<String> = tx
             .query_row(
                 "SELECT data FROM jobs WHERE owner=?1 AND idem=?2",
@@ -328,6 +357,10 @@ impl Store {
             return Ok(None);
         }
         for mut job in running {
+            if !mesh_job_permitted(&tx, &job)? {
+                cancel_active(&tx, &mut job, at)?;
+                continue;
+            }
             if job.status != "queued"
                 || !p.permits(&job.spec.mode)
                 || !node.offer.accepts(&job.spec)
@@ -349,12 +382,17 @@ impl Store {
             tx.commit()?;
             return Ok(Some(job));
         }
+        tx.commit()?;
         Ok(None)
     }
     pub fn renew(&mut self, p: &Principal, id: &str, lease: &str, at: i64) -> Result<Job> {
         let tx = self.db.transaction()?;
         let mut job = get(&tx, id)?;
         check_lease(&job, p, lease, at)?;
+        ensure!(
+            mesh_job_permitted(&tx, &job)?,
+            "job owner permission revoked"
+        );
         job.lease_until = Some(
             (at + LEASE_SECONDS)
                 .min(job.deadline)
@@ -384,6 +422,10 @@ impl Store {
             return Ok(job);
         }
         check_lease(&job, p, &completion.lease_id, at)?;
+        ensure!(
+            mesh_job_permitted(&tx, &job)?,
+            "job owner permission revoked"
+        );
         let assurance = job.spec.verify_result(&completion.result)?;
         ensure!(
             serde_json::to_vec(&completion.result)?.len() <= 2_097_152,
@@ -435,6 +477,10 @@ impl Store {
         let tx = self.db.transaction()?;
         let mut job = get(&tx, id)?;
         check_lease(&job, p, lease, at)?;
+        ensure!(
+            mesh_job_permitted(&tx, &job)?,
+            "job owner permission revoked"
+        );
         retry_or_fail(&tx, &mut job, at, "worker execution failed")?;
         save(&tx, &job)?;
         tx.commit()?;
@@ -446,18 +492,17 @@ impl Store {
         if p.id != job.owner && !p.has("admin") {
             return Err(UserFacing::forbidden("job not accessible").into());
         }
-        if ["queued", "running", "awaiting_payment"].contains(&job.status.as_str()) {
-            job.status = "cancelled".into();
-            refund(&tx, &mut job, at)?;
-            save(&tx, &job)?;
-        }
+        cancel_active(&tx, &mut job, at)?;
         tx.commit()?;
         Ok(job)
     }
     pub fn sweep(&mut self, at: i64) -> Result<()> {
         let tx = self.db.transaction()?;
         for mut job in all_active(&tx)? {
-            if job.deadline <= at
+            // Recover orphaned work left by an interrupted older-version revoke.
+            if !mesh_job_permitted(&tx, &job)? {
+                cancel_active(&tx, &mut job, at)?;
+            } else if job.deadline <= at
                 || (job.status == "running" && job.lease_until.is_none_or(|t| t <= at))
             {
                 retry_or_fail(&tx, &mut job, at, "lease or job deadline expired")?;
@@ -509,6 +554,52 @@ impl Store {
             row.ok_or_else(|| UserFacing::not_found("artifact not found"))?;
         Ok(json!({"id":id,"content":content,"sha256":hash,"expires_at":expires}))
     }
+}
+
+fn current_mesh_principal(
+    db: &Connection,
+    id: &str,
+    credential_hash: Option<&str>,
+) -> Result<Option<Principal>> {
+    if !id.starts_with("mesh_") {
+        return Ok(None);
+    }
+    let data: Option<String> = db
+        .query_row(
+            "SELECT principal FROM mesh_admissions WHERE id=?1 AND (?2 IS NULL OR token_hash=?2)",
+            params![id, credential_hash],
+            |r| r.get(0),
+        )
+        .optional()?;
+    data.map(|s| Ok(serde_json::from_str(&s)?)).transpose()
+}
+fn mesh_job_permitted(db: &Connection, job: &Job) -> Result<bool> {
+    if !job.owner.starts_with("mesh_") {
+        return Ok(true);
+    }
+    Ok(current_mesh_principal(db, &job.owner, None)?
+        .is_some_and(|p| p.has("submitter") && p.permits(&job.spec.mode)))
+}
+pub(crate) fn fence_mesh_jobs(
+    tx: &Transaction<'_>,
+    owner: &str,
+    allowed: Option<&Principal>,
+    at: i64,
+) -> Result<()> {
+    for mut job in all_active(tx)? {
+        if job.owner == owner && !allowed.is_some_and(|p| p.permits(&job.spec.mode)) {
+            cancel_active(tx, &mut job, at)?;
+        }
+    }
+    Ok(())
+}
+fn cancel_active(tx: &Transaction<'_>, job: &mut Job, at: i64) -> Result<()> {
+    if ["queued", "running", "awaiting_payment"].contains(&job.status.as_str()) {
+        job.status = "cancelled".into();
+        refund(tx, job, at)?;
+        save(tx, job)?;
+    }
+    Ok(())
 }
 
 fn account(tx: &Transaction<'_>, id: &str) -> Result<()> {

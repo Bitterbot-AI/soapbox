@@ -95,6 +95,8 @@ impl ApiError {
     }
 }
 type ApiResult<T> = std::result::Result<T, ApiError>;
+#[derive(Clone)]
+struct CredentialHash(String);
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.0, Json(json!({"error":self.1}))).into_response()
@@ -125,6 +127,7 @@ async fn auth(State(app): State<App>, mut req: Request, next: Next) -> ApiResult
     }
     .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "invalid credentials".into()))?;
     req.extensions_mut().insert(p);
+    req.extensions_mut().insert(CredentialHash(hash));
     Ok(next.run(req).await)
 }
 fn role(p: &Principal, role: &str) -> ApiResult<()> {
@@ -181,10 +184,20 @@ async fn jobs(
 async fn submit(
     State(app): State<App>,
     Extension(p): Extension<Principal>,
+    Extension(credential): Extension<CredentialHash>,
     Json(spec): Json<Submit>,
 ) -> ApiResult<Json<Job>> {
     role(&p, "submitter")?;
-    app.with(|s| Ok(Json(s.submit(&p, spec, now())?)))
+    // Body extraction may suspend after middleware authenticated this request.
+    // Revalidate the credential inside the transaction that enqueues the job.
+    app.with(|s| {
+        Ok(Json(s.submit_authenticated(
+            &p,
+            &credential.0,
+            spec,
+            now(),
+        )?))
+    })
 }
 async fn job(
     State(app): State<App>,

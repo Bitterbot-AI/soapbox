@@ -24,6 +24,28 @@ Bearer tokens authorize provisioned roles and memberships, not hardware attestat
 
 ## RPC credentials and error responses
 
+### Mesh permission changes (authorization-recovery update)
+
+Scope edits and full revocation cancel affected queued/running jobs in the same
+SQLite transaction as the admission change. Retained scopes keep their jobs.
+HTTP submission revalidates the credential and current scope inside the enqueue
+transaction after request-body extraction. Worker claim, renewal and result
+commit recheck the current owner admission. The sweeper also cancels orphaned
+mesh work left by older interrupted revocations. Successfully committed results
+remain available for idempotent completion replay; revocation does not undo work.
+
+The matching Bitterbot gateway persists disabled grants and reconciles them on
+startup and service ticks. Pending revocation remains visible until coordinator
+acknowledgement; local gateway denial is not proof of worker shutdown while the
+coordinator is unavailable. Requests serialized after a successful revocation
+commit cannot enqueue or claim work using the revoked mesh admission. Physical
+GPU cancellation is still bounded by worker/runtime behavior, not this API check.
+
+This applies to dynamic mesh admissions. Static coordinator principals keep
+their existing provisioning model. Paid mode remains unavailable to mesh peers;
+the Base Sepolia payment and dedicated-wallet policies are unchanged. This is an
+unreleased source update; older runtime archives must be replaced when packaging.
+
 The coordinator may use its own keyed RPC endpoint, but participant enrollment
 exports only the public Base Sepolia endpoint. Keyed/custom endpoints in incoming
 participant enrollment are rejected. Request errors and payment observation

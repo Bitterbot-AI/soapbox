@@ -52,7 +52,10 @@ impl Store {
             |r| r.get(0),
         )?;
         ensure!(exists || count < 512, "admission limit reached");
-        self.db.execute("INSERT INTO mesh_admissions(id,token_hash,principal) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET token_hash=excluded.token_hash,principal=excluded.principal", params![principal.id,digest(a.token.as_bytes()),serde_json::to_string(&principal)?])?;
+        let tx = self.db.transaction()?;
+        tx.execute("INSERT INTO mesh_admissions(id,token_hash,principal) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET token_hash=excluded.token_hash,principal=excluded.principal", params![principal.id,digest(a.token.as_bytes()),serde_json::to_string(&principal)?])?;
+        crate::store::fence_mesh_jobs(&tx, &principal.id, Some(&principal), crate::model::now())?;
+        tx.commit()?;
         Ok(principal)
     }
     pub fn mesh_identity(&self, hash: &str) -> Result<Option<Principal>> {
@@ -68,27 +71,11 @@ impl Store {
     }
     pub fn revoke_admission(&mut self, public_key: &str) -> Result<()> {
         let id = format!("mesh_{public_key}");
-        // Stop accepting immediately; cancel outstanding work owned by this peer.
+        // Credential removal and job cancellation share one durable commit point.
         let tx = self.db.transaction()?;
         tx.execute("DELETE FROM mesh_admissions WHERE id=?1", [&id])?;
+        crate::store::fence_mesh_jobs(&tx, &id, None, crate::model::now())?;
         tx.commit()?;
-        let p = Principal {
-            id,
-            token_env: String::new(),
-            roles: vec!["submitter".into()],
-            pools: vec![],
-            projects: vec![],
-        };
-        let mut stmt = self
-            .db
-            .prepare("SELECT id FROM jobs WHERE owner=?1 AND status IN ('queued','running')")?;
-        let jobs = stmt
-            .query_map([&p.id], |r| r.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        drop(stmt);
-        for job in jobs {
-            self.cancel(&p, &job, crate::model::now())?;
-        }
         Ok(())
     }
 }

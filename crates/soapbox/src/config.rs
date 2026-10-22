@@ -25,7 +25,7 @@ impl Principal {
     }
     pub fn permits(&self, mode: &Mode) -> bool {
         match mode {
-            Mode::Paid { .. } | Mode::PaidUsdc { .. } => true,
+            Mode::Paid { .. } | Mode::PaidUsdc { .. } => !self.id.starts_with("mesh_"),
             Mode::Private { pool_id } => self.pools.contains(pool_id),
             Mode::Collective { project_id } => self.projects.contains(project_id),
         }
@@ -66,7 +66,10 @@ impl Config {
         let mut tokens = HashSet::new();
         for p in &config.principals {
             ensure!(
-                !p.id.is_empty() && p.id.len() <= 128 && ids.insert(&p.id),
+                !p.id.is_empty()
+                    && !p.id.starts_with("mesh_")
+                    && p.id.len() <= 128
+                    && ids.insert(&p.id),
                 "invalid or duplicate principal id"
             );
             ensure!(

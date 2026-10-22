@@ -16,6 +16,8 @@ impl Store {
         let db = Connection::open(path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+            CREATE TABLE IF NOT EXISTS mesh_admissions(id TEXT PRIMARY KEY,token_hash TEXT UNIQUE NOT NULL,principal TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS mesh_cancellations(owner TEXT NOT NULL,idem TEXT NOT NULL,at INTEGER NOT NULL,PRIMARY KEY(owner,idem));
             CREATE TABLE IF NOT EXISTS meta(version INTEGER NOT NULL);
             INSERT INTO meta SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM meta);
             CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, owner TEXT NOT NULL, idem TEXT NOT NULL,
@@ -34,7 +36,10 @@ impl Store {
             CREATE INDEX IF NOT EXISTS artifacts_owner ON artifacts(owner);
         ")?;
         let version: i64 = db.query_row("SELECT version FROM meta", [], |r| r.get(0))?;
-        anyhow::ensure!(version == 1, "unsupported database schema");
+        anyhow::ensure!(version == 1 || version == 2, "unsupported database schema");
+        // Older runtimes must refuse this database rather than silently ignore
+        // cancellation fences. Upgrade before accepting any cancellation.
+        db.execute("UPDATE meta SET version=2 WHERE version=1", [])?;
         Ok(Self {
             payments: None,
             db,
@@ -116,11 +121,51 @@ impl Store {
         self.balance(id)
     }
     pub fn submit(&mut self, p: &Principal, spec: Submit, at: i64) -> Result<Job> {
+        self.submit_inner(p, None, spec, at)
+    }
+    /// HTTP callers must bind the current admission to the authenticated credential.
+    /// The uncredentialed entry point is for trusted in-process callers only.
+    pub fn submit_authenticated(
+        &mut self,
+        p: &Principal,
+        credential_hash: &str,
+        spec: Submit,
+        at: i64,
+    ) -> Result<Job> {
+        self.submit_inner(p, Some(credential_hash), spec, at)
+    }
+    fn submit_inner(
+        &mut self,
+        p: &Principal,
+        credential_hash: Option<&str>,
+        spec: Submit,
+        at: i64,
+    ) -> Result<Job> {
+        let tx = self.db.transaction()?;
+        // Never authorize queued work from the middleware's captured scope.
+        let current = current_mesh_principal(&tx, &p.id, credential_hash)?;
+        let p = if p.id.starts_with("mesh_") {
+            current
+                .as_ref()
+                .ok_or_else(|| UserFacing::forbidden("peer admission no longer valid"))?
+        } else {
+            p
+        };
         ensure!(p.has("submitter"), "submitter role required");
         if !p.permits(&spec.mode) {
             return Err(UserFacing::forbidden("pool/project membership required").into());
         }
         spec.validate()?;
+        // A cancellation may win before a delayed/retried enqueue arrives. Its
+        // tombstone and any affected job are committed together below.
+        if p.id.starts_with("mesh_") {
+            let cancelled: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM mesh_cancellations WHERE owner=?1 AND idem=?2)",
+                params![p.id, spec.idempotency_key],
+                |r| r.get(0),
+            )?;
+            ensure!(!cancelled, "workload intent was cancelled");
+        }
         ensure!(
             !spec.idempotency_key.is_empty() && spec.idempotency_key.len() <= 128,
             "invalid idempotency key"
@@ -133,7 +178,6 @@ impl Store {
         if matches!(spec.workload, Workload::Sha256 { .. }) {
             ensure!(!spec.resources.require_gpu, "SHA-256 is a CPU workload");
         }
-        let tx = self.db.transaction()?;
         let existing: Option<String> = tx
             .query_row(
                 "SELECT data FROM jobs WHERE owner=?1 AND idem=?2",
@@ -327,6 +371,10 @@ impl Store {
             return Ok(None);
         }
         for mut job in running {
+            if !mesh_job_permitted(&tx, &job)? {
+                cancel_active(&tx, &mut job, at)?;
+                continue;
+            }
             if job.status != "queued"
                 || !p.permits(&job.spec.mode)
                 || !node.offer.accepts(&job.spec)
@@ -348,12 +396,17 @@ impl Store {
             tx.commit()?;
             return Ok(Some(job));
         }
+        tx.commit()?;
         Ok(None)
     }
     pub fn renew(&mut self, p: &Principal, id: &str, lease: &str, at: i64) -> Result<Job> {
         let tx = self.db.transaction()?;
         let mut job = get(&tx, id)?;
         check_lease(&job, p, lease, at)?;
+        ensure!(
+            mesh_job_permitted(&tx, &job)?,
+            "job owner permission revoked"
+        );
         job.lease_until = Some(
             (at + LEASE_SECONDS)
                 .min(job.deadline)
@@ -383,6 +436,10 @@ impl Store {
             return Ok(job);
         }
         check_lease(&job, p, &completion.lease_id, at)?;
+        ensure!(
+            mesh_job_permitted(&tx, &job)?,
+            "job owner permission revoked"
+        );
         let assurance = job.spec.verify_result(&completion.result)?;
         ensure!(
             serde_json::to_vec(&completion.result)?.len() <= 2_097_152,
@@ -434,10 +491,81 @@ impl Store {
         let tx = self.db.transaction()?;
         let mut job = get(&tx, id)?;
         check_lease(&job, p, lease, at)?;
+        ensure!(
+            mesh_job_permitted(&tx, &job)?,
+            "job owner permission revoked"
+        );
         retry_or_fail(&tx, &mut job, at, "worker execution failed")?;
         save(&tx, &job)?;
         tx.commit()?;
         Ok(job)
+    }
+    /// Trusted gateway cancellation, bound to the authenticated P2P public key.
+    /// It grants no admission and returns neither inputs nor results. In contrast
+    /// to replaying submit, it cannot create work, even after re-admission.
+    pub fn cancel_mesh_intent(&mut self, public_key: &str, key: &str, at: i64) -> Result<Value> {
+        ensure!(
+            public_key.len() == 64
+                && public_key
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "invalid public key"
+        );
+        let intent = key.strip_prefix("mesh-").and_then(|s| s.rsplit_once('-'));
+        ensure!(
+            intent.is_some_and(|(batch, shard)| Uuid::parse_str(batch)
+                .is_ok_and(|id| id.to_string() == batch)
+                && shard
+                    .parse::<u32>()
+                    .is_ok_and(|n| n < 512 && n.to_string() == shard)),
+            "invalid mesh intent"
+        );
+        let owner = format!("mesh_{public_key}");
+        let tx = self.db.transaction()?;
+        let data: Option<String> = tx
+            .query_row(
+                "SELECT data FROM jobs WHERE owner=?1 AND idem=?2",
+                params![owner, key],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let mut job: Option<Job> = data.map(|s| serde_json::from_str(&s)).transpose()?;
+        if let Some(ref j) = job {
+            ensure!(
+                matches!(j.spec.mode, Mode::Private { .. } | Mode::Collective { .. }),
+                "mesh cancellation requires free work"
+            );
+        }
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM mesh_cancellations WHERE owner=?1 AND idem=?2)",
+            params![owner, key],
+            |r| r.get(0),
+        )?;
+        if !exists && job.is_none() {
+            // Bound storage for peers with no admission. Existing jobs and
+            // idempotent cancellation retries always remain cancellable.
+            let own: u64 = tx.query_row(
+                "SELECT COUNT(*) FROM mesh_cancellations WHERE owner=?1",
+                [&owner],
+                |r| r.get(0),
+            )?;
+            let total: u64 =
+                tx.query_row("SELECT COUNT(*) FROM mesh_cancellations", [], |r| r.get(0))?;
+            ensure!(
+                own < 4096 && total < 65536,
+                "cancellation journal capacity reached"
+            );
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO mesh_cancellations(owner,idem,at) VALUES(?1,?2,?3)",
+            params![owner, key, at],
+        )?;
+        if let Some(ref mut j) = job {
+            cancel_active(&tx, j, at)?;
+        }
+        let receipt = json!({"idempotency_key":key,"job_id":job.as_ref().map(|j| &j.id),"status":job.as_ref().map_or("cancelled", |j| j.status.as_str())});
+        tx.commit()?;
+        Ok(receipt)
     }
     pub fn cancel(&mut self, p: &Principal, id: &str, at: i64) -> Result<Job> {
         let tx = self.db.transaction()?;
@@ -445,18 +573,17 @@ impl Store {
         if p.id != job.owner && !p.has("admin") {
             return Err(UserFacing::forbidden("job not accessible").into());
         }
-        if ["queued", "running", "awaiting_payment"].contains(&job.status.as_str()) {
-            job.status = "cancelled".into();
-            refund(&tx, &mut job, at)?;
-            save(&tx, &job)?;
-        }
+        cancel_active(&tx, &mut job, at)?;
         tx.commit()?;
         Ok(job)
     }
     pub fn sweep(&mut self, at: i64) -> Result<()> {
         let tx = self.db.transaction()?;
         for mut job in all_active(&tx)? {
-            if job.deadline <= at
+            // Recover orphaned work left by an interrupted older-version revoke.
+            if !mesh_job_permitted(&tx, &job)? {
+                cancel_active(&tx, &mut job, at)?;
+            } else if job.deadline <= at
                 || (job.status == "running" && job.lease_until.is_none_or(|t| t <= at))
             {
                 retry_or_fail(&tx, &mut job, at, "lease or job deadline expired")?;
@@ -508,6 +635,52 @@ impl Store {
             row.ok_or_else(|| UserFacing::not_found("artifact not found"))?;
         Ok(json!({"id":id,"content":content,"sha256":hash,"expires_at":expires}))
     }
+}
+
+fn current_mesh_principal(
+    db: &Connection,
+    id: &str,
+    credential_hash: Option<&str>,
+) -> Result<Option<Principal>> {
+    if !id.starts_with("mesh_") {
+        return Ok(None);
+    }
+    let data: Option<String> = db
+        .query_row(
+            "SELECT principal FROM mesh_admissions WHERE id=?1 AND (?2 IS NULL OR token_hash=?2)",
+            params![id, credential_hash],
+            |r| r.get(0),
+        )
+        .optional()?;
+    data.map(|s| Ok(serde_json::from_str(&s)?)).transpose()
+}
+fn mesh_job_permitted(db: &Connection, job: &Job) -> Result<bool> {
+    if !job.owner.starts_with("mesh_") {
+        return Ok(true);
+    }
+    Ok(current_mesh_principal(db, &job.owner, None)?
+        .is_some_and(|p| p.has("submitter") && p.permits(&job.spec.mode)))
+}
+pub(crate) fn fence_mesh_jobs(
+    tx: &Transaction<'_>,
+    owner: &str,
+    allowed: Option<&Principal>,
+    at: i64,
+) -> Result<()> {
+    for mut job in all_active(tx)? {
+        if job.owner == owner && !allowed.is_some_and(|p| p.permits(&job.spec.mode)) {
+            cancel_active(tx, &mut job, at)?;
+        }
+    }
+    Ok(())
+}
+fn cancel_active(tx: &Transaction<'_>, job: &mut Job, at: i64) -> Result<()> {
+    if ["queued", "running", "awaiting_payment"].contains(&job.status.as_str()) {
+        job.status = "cancelled".into();
+        refund(tx, job, at)?;
+        save(tx, job)?;
+    }
+    Ok(())
 }
 
 fn account(tx: &Transaction<'_>, id: &str) -> Result<()> {

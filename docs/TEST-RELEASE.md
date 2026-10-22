@@ -1,92 +1,78 @@
-# Soapbox 0.3.0-rc.4 — desktop wizard preview
+# Soapbox 0.3.0-rc.6 — Branded Compute preview
 
-This private release installs **Compute → Set up buyer or operator** into an existing
-Bitterbot Desktop **1.8.0** installation. Payments are restricted to **Base Sepolia
-(84532), test USDC**. Mainnet wallet settings and wallet files are preserved.
+This public test release adds the original SoapBox wordmark to the Compute dashboard and
+buyer/operator setup wizard, with responsive layout and contrast in both themes. It retains
+rc5's one-click GPU operator setup and existing Bitterbot P2P transport integration for
+Bitterbot Desktop 1.8.0 on Ubuntu 24.04 x64 / WSL2 Ubuntu 24.04.
+Compute remains enabled by default. Paid jobs remain on Base Sepolia (84532), using the
+separate Compute wallet. The installer does not fund jobs or change mainnet wallet data.
 
-## Install without terminal commands
+## Install
 
-1. Sign in to GitHub with an account granted access to `Bitterbot-AI/soapbox` and open
-   the `v0.3.0-rc.4` release. Download the Windows/WSL ZIP or Linux tar.gz asset.
-2. Extract the **entire** archive. On Windows, open **Soapbox-Setup.exe**. On Ubuntu,
-   open the executable **Soapbox-Setup**. A local setup page opens in your default browser.
-3. Choose **Buyer** or **GPU operator**, then **Check prerequisites**. Correct any failed
-   prerequisites before continuing. The installer does not change drivers, Docker permissions
-   or Windows security settings. This unsigned private preview may be blocked by organizational
-   security policy; obtain an approved build rather than disabling those protections.
-4. Check the installation acknowledgment and click **Install Compute wizard**. The installer
-   verifies all packaged files and backs up the affected configuration before replacing it.
-   Existing Compute participants keep their enrollment and worker configuration.
-5. Open Bitterbot using the link. Restart Bitterbot normally if it does not reconnect itself.
-   Open **Compute → Set up buyer or operator** and complete the role-specific steps below.
+1. Download the Windows/WSL ZIP or Linux tar.gz from the rc6 GitHub release and extract it.
+2. Open **Soapbox-Setup.exe** on Windows, or **Soapbox-Setup** on Linux.
+3. Choose Buyer or GPU operator, run the prerequisite checks, and install.
+4. Restart Bitterbot normally so the updated gateway and P2P sidecar load. Open **Compute**.
 
-Only Ubuntu 24.04 x64 / WSL2 Ubuntu 24.04 is supported. On Windows, Bitterbot must be
-installed in your **default WSL distribution**. This is an add-on installer, not a fresh
-Bitterbot or WSL installer. The installed Bitterbot supplies Node.js 22+. Buyers need
-256 MiB of free disk; operators need at least 4 GiB and accessible Docker with NVIDIA
-Container Toolkit and cgroup v2 memory/swap enforcement. A working NVIDIA driver is required.
-The setup page binds only to loopback and uses a random, temporary session credential.
-Click **Close installer** when finished; unused sessions expire after 30 minutes.
+The unsigned Windows launcher starts the local installer inside your existing WSL Ubuntu
+environment. Organizational execution policies may block unsigned applications; the package
+does not change those policies. Node.js 22 and Bitterbot 1.8.0 must already be installed.
+GPU operators need Docker with NVIDIA support, cgroup v2 and swap limits, plus 4 GiB free
+disk. Checksum and per-file manifest verification detect corruption; they are not a publisher
+signing certificate.
 
-## Upgrade from rc3
+## Host a P2P GPU operator
 
-Run the rc4 installer against the same Bitterbot profile, then restart Bitterbot.
-Existing enrollment, operator settings and both wallets are retained. rc4 corrects
-the approved escrow bytecode hash that prevented buyer funding in the published rc3
-plugin. It also includes a regression test for the release payment policy.
-Compute stays enabled by default and payments stay on Base Sepolia.
+In **Compute → Set up buyer or operator**, choose **GPU operator**, then click
+**Enable this GPU operator**. No enrollment JSON, wallet or terminal commands are required.
+Setup verifies the bundled runtime, checks prerequisites, prepares the pinned model, tests
+isolated GPU execution and starts a local coordinator. The first setup may take several minutes.
+Settings are activated only after readiness succeeds; a failed setup leaves the previous app
+configuration intact and displays a retryable error.
 
-## Buyer
+The operator permits one CPU thread and 2 GiB of host memory per job. It serves the private
+pool **private** and collective project **community**, with a daily collective allowance of
+1,000 items. No remote peer can submit until you grant its full Bitterbot peer ID access in
+**P2P Compute**. Discovery is public metadata; job inputs are sent only to selected operators.
+Those operators can see the inputs they execute. Use **Pause new work** to stop allocations.
 
-Choose **Buyer** in Compute. Create your separate Base Sepolia wallet using your own CDP
-credentials (or the gateway's existing credentials). Give only its public address to the
-coordinator owner and import the buyer enrollment JSON they provide privately. Review the
-coordinator, identity and wallet address, acknowledge, and click **Activate buyer**.
+In another updated Bitterbot app, select the discovered operator, matching pool/project and
+CPU hashing or GPU embeddings in **P2P Compute**. Submit the batch and inspect progress and
+results. The Compute screen and P2P dashboard share the same activity view. Offline cancellation
+stays pending until the peer responds. GPU results currently require a trusted operator.
 
-Obtain Base Sepolia test USDC and test ETH for gas. Select **Paid · test USDC**, an available
-operator and **GPU · batch embeddings**. Submit your inputs, review the exact quote and fund
-that job separately. The test wallet retains 0.10 USDC/job and 1 USDC/day spending caps.
-The installer never funds a job or switches the main wallet to testnet.
+## Paid Base Sepolia pilot
 
-## GPU operator
+The existing paid flow remains available. Buyers create a separate Compute test wallet using
+their own CDP credentials and import a scoped coordinator enrollment for that wallet address.
+Review and fund each job explicitly. Existing caps remain 0.10 test USDC per job and 1 test USDC
+per day, with test ETH for gas. Never share private keys or CDP secrets with a coordinator.
 
-Choose **GPU operator** in Compute and import the coordinator-issued operator enrollment.
-Its payout address is a Base Sepolia address you control; no signing key is required.
-Click **Prepare GPU runtime**. The approved rc3 runtime is included and its exact SHA-256
-is checked again before execution. Setup builds the fixed container image, downloads the
-pinned model and verifies isolated GPU execution. No second GitHub download is necessary.
-
-Review the payout address, acknowledge the 1 GiB allowance, and click **Activate operator**.
-Compute shows readiness and earnings. **Pause new work** stops new allocations. This GUI
-setup enables approved paid test jobs; private/collective memberships require coordinator
-authorization and worker configuration. Unsupported hardware fails closed.
+Operators joining that pilot select **Connect to an existing coordinator for paid Base Sepolia
+jobs instead**, import their operator enrollment and prepare/activate the runtime. The enrollment
+contains their payout address; no wallet signing key is needed. This is distinct from the local
+private/collective pool. Paid multi-operator execution over P2P is not included in this release.
 
 ## Rollback
 
-Reopen **Soapbox-Setup**, check **Restore the previous Compute setup and keep my wallet data**,
-and click **Roll back this installation**. Restart Bitterbot normally if necessary.
+Reopen **Soapbox-Setup**, select rollback and restore the previous installation. Restart
+Bitterbot normally. The installer restores its gateway files, UI/plugin paths and P2P sidecar
+settings, while retaining wallet files, databases, model caches and enrollment backups.
+It preserves unrelated settings and refuses to overwrite gateway/P2P changes made elsewhere.
+An activated operator's coordinator must be reachable and unfinished jobs must complete or be
+cancelled before rollback. Backups stay under the local `compute` installation directory.
 
-Rollback preserves mainnet and test-wallet files, transaction history, models and enrollment
-backups. It restores the integration settings owned by this installation and preserves unrelated
-settings edited later. If the wizard activated a participant, the coordinator must be reachable
-and visible pending jobs must finish/cancel and settle before rollback. Conflicting changes to
-Compute block automatic rollback; the private `before-config.json` remains in the deployment
-directory for recovery. No user data is deleted. The most recent installer deployment is selected.
+## Test scope and limitations
 
-## Coordinator and network preparation
+The release includes the branded rc6 UI/plugin metadata and the unchanged rc5 gateway,
+plugin executable code, Rust P2P sidecar and Rust worker. The standalone runtime archive
+keeps its rc5 filename and checksum; it is included in both installers and this release.
+Only approved CPU hashing and GPU embedding adapters execute. Discovery, admission, fan-out,
+restart recovery and isolated GPU execution are tested locally. Physical two-machine, NAT/relay
+and fleet-scale acceptance remain separate gates. Relay nodes carrying Compute gossip also need
+the updated topic allowlist. Storage durability, verified GPU replicas and paid mesh settlement
+are later work. This is a trusted test network, not an arbitrary-code public cloud service.
 
-The coordinator owner must enroll the test user's public address and provide a scoped JSON file.
-Never share an admin token, CDP secrets or private wallet key. Enrollment management remains an
-administrator task; this release does not expose a public enrollment service. Configure a valid
-HTTPS coordinator endpoint or an agreed private tunnel before testing from another machine.
-No firewalls, DNS, VPNs or public ports are changed by this installer.
-
-## Release boundaries
-
-The installer package and plugin are rc4. The UI, launchers and bundled fixed-workload
-Rust runtime are unchanged from rc3; the runtime archive retains its rc3 filename and pin.
-This candidate includes API disclosure fixes and tighter desktop funding/account boundaries. SHA256SUMS and the per-file release manifest detect corruption; these
-are not a publisher signing certificate. No credentials, enrolled identities, wallet files,
-databases, logs or cached models are distributed. Only approved CPU hashing and GPU embedding
-workloads run. GPU evidence remains worker-reported and embedding verification checks shape.
-Physical two-machine acceptance and independent security review remain separate gates.
+No wallet files, credentials, enrollment secrets, local databases, logs or cached models belong
+in this release. Public contract addresses, transaction hashes, model hashes and source code are
+safe to inspect. See the release notes for validation results and source commit provenance.

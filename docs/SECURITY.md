@@ -24,6 +24,45 @@ Bearer tokens authorize provisioned roles and memberships, not hardware attestat
 
 ## RPC credentials and error responses
 
+### Mesh permission changes (authorization-recovery update)
+
+Scope edits and full revocation cancel affected queued/running jobs in the same
+SQLite transaction as the admission change. Retained scopes keep their jobs.
+HTTP submission revalidates the credential and current scope inside the enqueue
+transaction after request-body extraction. Worker claim, renewal and result
+commit recheck the current owner admission. The sweeper also cancels orphaned
+mesh work left by older interrupted revocations. Successfully committed results
+remain available for idempotent completion replay; revocation does not undo work.
+
+The matching Bitterbot gateway persists disabled grants and reconciles them on
+startup and service ticks. Pending revocation remains visible until coordinator
+acknowledgement; local gateway denial is not proof of worker shutdown while the
+coordinator is unavailable. Requests serialized after a successful revocation
+commit cannot enqueue or claim work using the revoked mesh admission. Physical
+GPU cancellation is still bounded by worker/runtime behavior, not this API check.
+
+This applies to dynamic mesh admissions. Static coordinator principals keep
+their existing provisioning model. Paid mode remains unavailable to mesh peers;
+the Base Sepolia payment and dedicated-wallet policies are unchanged. This is an
+rc7 runtime update; upgrade the gateway and runtime together. Older archives do not contain these fixes.
+
+### Cancellation fences (rc8)
+
+The admin-only `POST /v1/admissions/{publicKeyHex}/cancel` endpoint records an
+owner-bound mesh idempotency key and cancels matching free work in one transaction.
+It returns only the key, optional job ID and terminal status. The matching gateway
+binds the public key to the authenticated P2P peer, including after revocation.
+No grant or submission is needed. Late enqueue is rejected after restart or
+re-admission; already completed effects are not undone. Missing-job fences are
+limited to 4,096 per owner and 65,536 overall; existing jobs and repeated cancels
+remain cancellable when that limit is reached. Fences are not expired automatically.
+
+Rc8 upgrades the coordinator database to schema 2 so older runtimes refuse it
+instead of ignoring cancellation fences. Upgrade gateway and runtime together.
+Downgrading the desktop to an rc7 bundle stops local operator compatibility;
+reinstall rc8 or newer to resume. Never delete the database or restore a snapshot
+that predates cancellation acknowledgements to bypass this protection.
+
 The coordinator may use its own keyed RPC endpoint, but participant enrollment
 exports only the public Base Sepolia endpoint. Keyed/custom endpoints in incoming
 participant enrollment are rejected. Request errors and payment observation

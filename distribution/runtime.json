@@ -1,8 +1,8 @@
 {
-  "version": "0.3.0-rc.3",
-  "filename": "soapbox-runtime-0.3.0-rc.3-linux-x64.tar.gz",
-  "directory": "soapbox-runtime-0.3.0-rc.3-linux-x64",
-  "bytes": 4297661,
-  "sha256": "2bcabeeb13ca212ecaf9af0e2860b30d53f3a4b13f1956fb962bf0ebf2936190",
-  "source_commit": "a5c5590fddf3606b250394e79f749786cc9c2c03"
+  "version": "0.3.0-rc.8",
+  "filename": "soapbox-runtime-0.3.0-rc.8-linux-x64.tar.gz",
+  "directory": "soapbox-runtime-0.3.0-rc.8-linux-x64",
+  "bytes": 4329003,
+  "sha256": "91fb0771960a9a4afea9a4189e258a72231748218d1380d5e01a6291c942b119",
+  "source_tree_sha256": "ec5a35e4919306ba58f4a1414566f2bca3ca2410ea7fcb67034b637dcc22344a"
 }

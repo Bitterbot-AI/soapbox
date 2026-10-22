@@ -95,6 +95,8 @@ impl ApiError {
     }
 }
 type ApiResult<T> = std::result::Result<T, ApiError>;
+#[derive(Clone)]
+struct CredentialHash(String);
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.0, Json(json!({"error":self.1}))).into_response()
@@ -118,9 +120,14 @@ async fn auth(State(app): State<App>, mut req: Request, next: Next) -> ApiResult
         .identities
         .iter()
         .find(|(expected, _)| bool::from(expected.as_bytes().ct_eq(hash.as_bytes())))
-        .map(|(_, p)| p.clone())
-        .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "invalid credentials".into()))?;
+        .map(|(_, p)| p.clone());
+    let p = match p {
+        Some(p) => Some(p),
+        None => app.with(|s| s.mesh_identity(&hash))?,
+    }
+    .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "invalid credentials".into()))?;
     req.extensions_mut().insert(p);
+    req.extensions_mut().insert(CredentialHash(hash));
     Ok(next.run(req).await)
 }
 fn role(p: &Principal, role: &str) -> ApiResult<()> {
@@ -136,6 +143,9 @@ fn role(p: &Principal, role: &str) -> ApiResult<()> {
 pub fn router(app: App) -> Router {
     Router::new()
         .route("/v1/status", get(status))
+        .route("/v1/admissions", post(admit))
+        .route("/v1/admissions/{key}/revoke", post(revoke_admission))
+        .route("/v1/admissions/{key}/cancel", post(cancel_mesh_intent))
         .route("/v1/settlements", get(crate::payment::intents))
         .route("/v1/jobs/{id}/payment", post(crate::payment::refresh))
         .route("/v1/jobs", get(jobs).post(submit))
@@ -163,7 +173,7 @@ async fn status(
         Ok(Json(json!({"api_version":API_VERSION,"release":env!("CARGO_PKG_VERSION"),"settlement":if s.payments.is_some() { "usdc_escrow" } else { "test_credits" },
             "principal":{"id":p.id,"roles":p.roles,"pools":p.pools,"projects":p.projects},"payment_account":s.payments.as_ref().map(|cfg| json!({"chain_id":cfg.chain_id,"address":cfg.wallets.get(&p.id)})),"account":s.balance(&p.id)?,"nodes":s.nodes(&p,now())?,"jobs":s.jobs(&p)?,
             "capabilities":{"cpu_sha256":true,"embeddings":"pinned_ollama_batches","gpu_evidence":"worker_reported_full_residency","durable_storage":false,
-                "temporary_artifacts":true,"public_marketplace":false,"mesh_discovery":false}})))
+                "temporary_artifacts":true,"public_marketplace":false,"mesh_discovery":false,"mesh_admissions":true,"mesh_cancellation":true}})))
     })
 }
 async fn jobs(
@@ -175,10 +185,20 @@ async fn jobs(
 async fn submit(
     State(app): State<App>,
     Extension(p): Extension<Principal>,
+    Extension(credential): Extension<CredentialHash>,
     Json(spec): Json<Submit>,
 ) -> ApiResult<Json<Job>> {
     role(&p, "submitter")?;
-    app.with(|s| Ok(Json(s.submit(&p, spec, now())?)))
+    // Body extraction may suspend after middleware authenticated this request.
+    // Revalidate the credential inside the transaction that enqueues the job.
+    app.with(|s| {
+        Ok(Json(s.submit_authenticated(
+            &p,
+            &credential.0,
+            spec,
+            now(),
+        )?))
+    })
 }
 async fn job(
     State(app): State<App>,
@@ -322,4 +342,50 @@ async fn artifact_get(
 ) -> ApiResult<Json<Value>> {
     role(&p, "submitter")?;
     app.with(|s| Ok(Json(s.artifact_get(&p, &id, now())?)))
+}
+
+async fn admit(
+    State(app): State<App>,
+    Extension(p): Extension<Principal>,
+    Json(req): Json<crate::admissions::Admission>,
+) -> ApiResult<Json<Value>> {
+    role(&p, "admin")?;
+    if !req.pools.iter().all(|s| p.pools.contains(s))
+        || !req.projects.iter().all(|s| p.projects.contains(s))
+    {
+        return Err(ApiError(StatusCode::FORBIDDEN, "scope not owned".into()));
+    }
+    app.with(|s| Ok(Json(json!({"principal":s.admit(req)?.id}))))
+}
+async fn revoke_admission(
+    State(app): State<App>,
+    Extension(p): Extension<Principal>,
+    Path(key): Path<String>,
+) -> ApiResult<Json<Value>> {
+    role(&p, "admin")?;
+    app.with(|s| {
+        s.revoke_admission(&key)?;
+        Ok(Json(json!({"revoked":true})))
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CancelIntent {
+    idempotency_key: String,
+}
+async fn cancel_mesh_intent(
+    State(app): State<App>,
+    Extension(p): Extension<Principal>,
+    Path(key): Path<String>,
+    Json(req): Json<CancelIntent>,
+) -> ApiResult<Json<Value>> {
+    role(&p, "admin")?;
+    app.with(|s| {
+        Ok(Json(s.cancel_mesh_intent(
+            &key,
+            &req.idempotency_key,
+            now(),
+        )?))
+    })
 }

@@ -12,3 +12,13 @@ settlement/build/
 /release/
 *.log
 rustc-ice-*.txt
+
+# Local credentials and node identities never belong in public source.
+.env.*
+!.env.example
+!.env.*.example
+wallet-data.json
+tx-history.json
+node.key
+mesh-operator.json
+credentials.json

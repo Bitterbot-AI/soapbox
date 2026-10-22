@@ -1,6 +1,6 @@
 [package]
 name = "soapbox"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.8"
 edition = "2021"
 description = "Opt-in compute pools for paid, private and collective workloads"
 license = "MIT"

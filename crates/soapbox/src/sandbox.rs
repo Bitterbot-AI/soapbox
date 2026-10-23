@@ -1,4 +1,5 @@
 //! Operator-owned Docker executor. No buyer images, mounts, environment variables or commands.
+use crate::sandbox_health::{diagnostic_tail, Code, Failure};
 use crate::{model::*, worker::WorkerConfig};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -134,9 +135,39 @@ pub(crate) async fn execute_reserved(
     config: &WorkerConfig,
     reservation: Option<&GpuReservation>,
 ) -> Result<Value> {
+    execute_inner(job, config, reservation, false).await
+}
+/// A CPU-only container verifies the same boundary as a real job without
+/// loading a model, acquiring the GPU, or contacting the coordinator.
+pub(crate) async fn check(config: &WorkerConfig) -> std::result::Result<(), Failure> {
+    match execute_inner(None, config, None, true).await {
+        Ok(value) if value == serde_json::json!({"isolation":"docker_v1"}) => Ok(()),
+        Ok(_) => Err(Failure::new(
+            Code::ProbeFailed,
+            "Invalid isolation-check response",
+        )),
+        Err(error) => {
+            let mut failure = error
+                .downcast_ref::<Failure>()
+                .cloned()
+                .unwrap_or_else(|| Failure::new(Code::ProbeFailed, format!("{error:#}")));
+            if !failure.blocks_execution() {
+                failure.code = Code::ProbeFailed;
+            }
+            Err(failure)
+        }
+    }
+}
+async fn execute_inner(
+    job: Option<&Job>,
+    config: &WorkerConfig,
+    reservation: Option<&GpuReservation>,
+    check_only: bool,
+) -> Result<Value> {
     let cfg = config.sandbox.as_ref().context("sandbox required")?;
     cfg.validate()?;
-    let gpu = job.is_none_or(|j| matches!(j.spec.workload, Workload::Embeddings { .. }));
+    let gpu =
+        !check_only && job.is_none_or(|j| matches!(j.spec.workload, Workload::Embeddings { .. }));
     let _lock = if gpu {
         if let Some(held) = reservation {
             ensure!(
@@ -155,13 +186,18 @@ pub(crate) async fn execute_reserved(
     let (cpu, memory) = job
         .map(|j| (j.spec.resources.cpu_threads, j.spec.resources.memory_mib))
         .unwrap_or((1, config.memory_mib));
+    let mut args = arguments(&name, cfg, cpu, memory, gpu);
+    if check_only {
+        *args.last_mut().expect("runner command") = "sandbox-check".into();
+    }
     let mut child = Command::new("docker")
-        .args(arguments(&name, cfg, cpu, memory, gpu))
+        .args(args)
         .kill_on_drop(true)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()?;
+        .spawn()
+        .map_err(|error| Failure::new(Code::Unavailable, error.to_string()))?;
     let mut safe_config = config.clone();
     safe_config.sandbox = None;
     safe_config.pause_file = None;
@@ -169,40 +205,50 @@ pub(crate) async fn execute_reserved(
         job: job.cloned(),
         config: safe_config,
     })?;
-    let result = tokio::time::timeout(Duration::from_secs(110), async {
+    let deadline = Duration::from_secs(if check_only { 30 } else { 110 });
+    let result = tokio::time::timeout(deadline, async {
         let mut stdin = child.stdin.take().context("runner stdin")?;
         stdin.write_all(&input).await?;
         stdin.shutdown().await?;
         drop(stdin);
         let mut bytes = Vec::new();
-        let mut diagnostic = Vec::new();
         let mut stdout = child
             .stdout
             .take()
             .context("runner stdout")?
             .take(2_097_153);
-        let mut stderr = child.stderr.take().context("runner stderr")?.take(8193);
-        tokio::try_join!(
-            stdout.read_to_end(&mut bytes),
-            stderr.read_to_end(&mut diagnostic)
+        let stderr = child.stderr.take().context("runner stderr")?;
+        let (_, diagnostic) = tokio::try_join!(
+            async {
+                stdout.read_to_end(&mut bytes).await?;
+                if bytes.len() > 2_097_152 {
+                    return Err(anyhow::Error::from(Failure::new(
+                        Code::OutputLimit,
+                        "stdout exceeded 2 MiB",
+                    )));
+                }
+                Ok(())
+            },
+            async { Ok::<_, anyhow::Error>(diagnostic_tail(stderr).await?) }
         )?;
-        ensure!(
-            bytes.len() <= 2_097_152 && diagnostic.len() <= 8192,
-            "sandbox output limit exceeded"
-        );
         let status = child.wait().await?;
-        ensure!(
-            status.success(),
-            "isolated workload failed ({status}): {}",
-            String::from_utf8_lossy(&diagnostic)
-        );
+        if !status.success() {
+            return Err(Failure::from_stderr(&diagnostic).into());
+        }
         Ok::<Value, anyhow::Error>(serde_json::from_slice(&bytes)?)
     })
-    .await?;
+    .await
+    .map_err(|error| Failure::new(Code::Timeout, error.to_string()))?;
     drop(guard);
     result
 }
 pub async fn runner() -> Result<()> {
+    runner_mode(false).await
+}
+pub async fn check_runner() -> Result<()> {
+    runner_mode(true).await
+}
+async fn runner_mode(check_only: bool) -> Result<()> {
     // In-container deadline survives a worker crash or a disconnected Docker client.
     tokio::time::timeout(Duration::from_secs(100), async {
         let mut input = Vec::new();
@@ -213,7 +259,15 @@ pub async fn runner() -> Result<()> {
         .await??;
         ensure!(input.len() <= 1_048_576, "runner input limit");
         let request: Input = serde_json::from_slice(&input)?;
-        verify_boundary(&request)?;
+        verify_boundary(&request).inspect_err(|error| {
+            if let Some(failure) = error.downcast_ref::<Failure>() {
+                failure.emit();
+            }
+        })?;
+        if check_only {
+            println!("{}", serde_json::json!({"isolation":"docker_v1"}));
+            return Ok(());
+        }
         if let Some(job) = &request.job {
             job.spec.validate()?;
         }
@@ -272,6 +326,15 @@ pub async fn runner() -> Result<()> {
 }
 
 fn verify_boundary(request: &Input) -> Result<()> {
+    verify_boundary_inner(request).map_err(|error| {
+        if error.downcast_ref::<Failure>().is_some() {
+            error
+        } else {
+            Failure::new(Code::BoundaryInvalid, format!("{error:#}")).into()
+        }
+    })
+}
+fn verify_boundary_inner(request: &Input) -> Result<()> {
     let status = std::fs::read_to_string("/proc/self/status")?;
     ensure!(
         status
@@ -289,10 +352,13 @@ fn verify_boundary(request: &Input) -> Result<()> {
         .trim()
         .parse::<u64>()?;
     let swap = std::fs::read_to_string("/sys/fs/cgroup/memory.swap.max")?;
-    ensure!(
-        swap.trim() == "0",
-        "sandbox swap limit is not enforced; fix the Docker daemon cgroup"
-    );
+    if swap.trim() != "0" {
+        return Err(Failure::new(
+            Code::SwapUnenforced,
+            "sandbox swap limit is not enforced; fix the Docker daemon cgroup",
+        )
+        .into());
+    }
     let pids = std::fs::read_to_string("/sys/fs/cgroup/pids.max")?
         .trim()
         .parse::<u64>()?;

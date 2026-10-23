@@ -1,4 +1,5 @@
 use crate::model::*;
+use crate::sandbox_health::{Failure, Health};
 use anyhow::{bail, ensure, Context, Result};
 use reqwest::{Client, Url};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -190,12 +191,22 @@ impl WorkerConfig {
     }
 }
 pub async fn inventory(config: &WorkerConfig) -> Result<Offer> {
-    inventory_cached(config, None).await
+    let failure = if config.sandbox.is_some() {
+        crate::sandbox::check(config).await.err()
+    } else {
+        None
+    };
+    let (offer, failure) = inventory_cached(config, None, failure.as_ref()).await?;
+    if let Some(failure) = failure {
+        eprintln!("Sandbox diagnostic (local only): {}", failure.diagnostic);
+    }
+    Ok(offer)
 }
 async fn inventory_cached(
     config: &WorkerConfig,
     cached: Option<&crate::gpu::Runtime>,
-) -> Result<Offer> {
+    isolation_failure: Option<&Failure>,
+) -> Result<(Offer, Option<Failure>)> {
     let mut system = sysinfo::System::new();
     system.refresh_memory();
     let available = system.available_memory() / 1024 / 1024;
@@ -216,6 +227,11 @@ async fn inventory_cached(
         hardware: vec![],
         gpu_unavailable_reason: None,
     };
+    if let Some(error) = isolation_failure {
+        pause_for_isolation(&mut offer, error);
+        return Ok((offer, Some(error.clone())));
+    }
+    let mut boundary_failure = None;
     if config.ollama_model.is_some() && !paused {
         offer.hardware = crate::gpu::inventory().await.unwrap_or_default();
         let readiness = async {
@@ -236,13 +252,36 @@ async fn inventory_cached(
                 offer.models.push(runtime.model.clone());
                 offer.runtime = Some(runtime);
             }
-            Ok(Err(error)) => offer.gpu_unavailable_reason = Some(error.to_string()),
+            Ok(Err(error)) => {
+                if let Some(failure) = error
+                    .downcast_ref::<Failure>()
+                    .filter(|e| e.blocks_execution())
+                {
+                    pause_for_isolation(&mut offer, failure);
+                    boundary_failure = Some(failure.clone());
+                } else {
+                    if let Some(failure) = error.downcast_ref::<Failure>() {
+                        eprintln!("Sandbox diagnostic (local only): {}", failure.diagnostic);
+                    }
+                    offer.gpu_unavailable_reason = Some(error.to_string());
+                }
+            }
             Err(_) => offer.gpu_unavailable_reason = Some("model warmup timed out".into()),
         }
     } else if paused {
         offer.gpu_unavailable_reason = Some("worker paused or RAM allowance unavailable".into());
     }
-    Ok(offer)
+    Ok((offer, boundary_failure))
+}
+fn pause_for_isolation(offer: &mut Offer, error: &Failure) {
+    offer.paused = true;
+    offer.isolation = None;
+    offer.gpu_observed = false;
+    offer.runtime = None;
+    offer.models.clear();
+    // Keep the existing wire schema for old coordinators/desktop clients. The
+    // stable prefix describes an execution failure, despite the legacy name.
+    offer.gpu_unavailable_reason = Some(error.to_string());
 }
 async fn execute(
     job: &Job,
@@ -266,6 +305,7 @@ async fn execute(
     .await?
 }
 pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<()> {
+    let mut health = Health::default();
     let mut cached_probe: Option<(std::time::Instant, crate::gpu::Runtime)> = None;
     let mut previous_offer: Option<Offer> = None;
     loop {
@@ -274,25 +314,46 @@ pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<
             .as_ref()
             .filter(|(at, _)| at.elapsed() < Duration::from_secs(60))
             .map(|(_, runtime)| runtime.clone());
-        let probe = inventory_cached(&config, cached.as_ref());
-        tokio::pin!(probe);
-        let mut heartbeat = tokio::time::interval(Duration::from_secs(8));
-        heartbeat.tick().await;
-        let mut offer = loop {
-            tokio::select! {
-                result = &mut probe => break result?,
-                _ = heartbeat.tick() => {
-                    if let Some(mut pending) = previous_offer.clone() {
-                        // Remain visible while probing, but do not advertise admission readiness.
-                        pending.paused = true;
-                        pending.gpu_observed = false;
-                        pending.gpu_unavailable_reason = Some("Refreshing GPU readiness".into());
-                        client.post::<Value>("/v1/workers/register", &pending).await?;
+        let mut offer = {
+            let probe = async {
+                let failure = if config.sandbox.is_some() {
+                    health
+                        .check(std::time::Instant::now(), || crate::sandbox::check(&config))
+                        .await
+                } else {
+                    None
+                };
+                let (offer, boundary_failure) =
+                    inventory_cached(&config, cached.as_ref(), failure.as_ref()).await?;
+                if failure.is_none() {
+                    if let Some(error) = boundary_failure {
+                        health.invalidate(std::time::Instant::now(), error);
                     }
-                },
-                _ = tokio::signal::ctrl_c() => return Ok(()),
+                }
+                Ok::<_, anyhow::Error>(offer)
+            };
+            tokio::pin!(probe);
+            let mut heartbeat = tokio::time::interval(Duration::from_secs(8));
+            heartbeat.tick().await;
+            loop {
+                tokio::select! {
+                    result = &mut probe => break result?,
+                    _ = heartbeat.tick() => {
+                        if let Some(mut pending) = previous_offer.clone() {
+                            // Remain visible while probing, but do not advertise admission readiness.
+                            pending.paused = true;
+                            pending.gpu_observed = false;
+                            pending.gpu_unavailable_reason = Some("Checking sandbox and runtime readiness".into());
+                            client.post::<Value>("/v1/workers/register", &pending).await?;
+                        }
+                    },
+                    _ = tokio::signal::ctrl_c() => return Ok(()),
+                }
             }
         };
+        if offer.isolation.is_none() && config.sandbox.is_some() {
+            cached_probe = None;
+        }
         previous_offer = Some(offer.clone());
         if config.sandbox.is_some() && cached.is_none() {
             cached_probe = offer
@@ -322,6 +383,16 @@ pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<
             None
         };
         client.post::<Value>("/v1/workers/register", &offer).await?;
+        if offer.paused {
+            if once {
+                return Ok(());
+            }
+            tokio::select! {
+                _=tokio::signal::ctrl_c()=>return Ok(()),
+                _=tokio::time::sleep(Duration::from_secs(2))=>{},
+            }
+            continue;
+        }
         if let Some(job) = client
             .post::<Option<Job>>("/v1/workers/claim", json!({}))
             .await?
@@ -371,6 +442,15 @@ pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<
                 }
                 Err(error) => {
                     eprintln!("job {} failed: {error}", job.id);
+                    if let Some(failure) = error.downcast_ref::<Failure>() {
+                        eprintln!("Sandbox diagnostic (local only): {}", failure.diagnostic);
+                        if failure.blocks_execution() {
+                            pause_for_isolation(&mut offer, failure);
+                            cached_probe = None;
+                            health.invalidate(std::time::Instant::now(), failure.clone());
+                            client.post::<Value>("/v1/workers/register", &offer).await?;
+                        }
+                    }
                     client
                         .post::<Value>(
                             &format!("/v1/jobs/{}/fail", job.id),
@@ -394,6 +474,67 @@ pub async fn run(client: ApiClient, config: WorkerConfig, once: bool) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn isolation_failure_disables_cpu_and_gpu_and_recovery_preserves_manual_pause() {
+        let dir = tempfile::tempdir().unwrap();
+        let pause = dir.path().join("PAUSE");
+        let config: WorkerConfig = serde_json::from_value(json!({
+            "sandbox":{"image":format!("sha256:{}", "a".repeat(64)),"models":dir.path(),"gpu_lock":dir.path().join("gpu.lock")},
+            "modes":["private"],"pools":["team"],"memory_mib":256,"pause_file":pause
+        })).unwrap();
+        let error = Failure::new(
+            crate::sandbox_health::Code::SwapUnenforced,
+            "private diagnostic",
+        );
+        let (offer, _) = inventory_cached(&config, None, Some(&error)).await.unwrap();
+        let spec: Submit = serde_json::from_value(json!({
+            "idempotency_key":"health-test", "mode":{"kind":"private","pool_id":"team"},
+            "workload":{"kind":"sha256","texts":["sample"]},
+            "resources":{"cpu_threads":1,"memory_mib":64,"require_gpu":false}
+        }))
+        .unwrap();
+        assert!(offer.paused);
+        assert!(offer.isolation.is_none());
+        assert!(!offer.accepts(&spec));
+        let mut gpu = spec.clone();
+        gpu.resources.require_gpu = true;
+        gpu.workload = Workload::Embeddings {
+            model: "test:latest".into(),
+            model_digest: Some("a".repeat(64)),
+            texts: vec!["sample".into()],
+        };
+        gpu.validate().unwrap();
+        // Both jobs are admissible on a healthy offer before isolation fails.
+        let mut healthy = offer.clone();
+        healthy.paused = false;
+        healthy.isolation = Some("docker_v1".into());
+        healthy.gpu_observed = true;
+        healthy.models = vec!["test:latest".into()];
+        healthy.runtime = Some(crate::gpu::Runtime {
+            model: "test:latest".into(),
+            model_digest: "a".repeat(64),
+            version: "test".into(),
+            model_bytes: 100,
+            gpu_bytes: 100,
+            observed_at: now(),
+        });
+        assert!(healthy.accepts(&spec));
+        assert!(healthy.accepts(&gpu));
+        pause_for_isolation(&mut healthy, &error);
+        assert!(!healthy.accepts(&spec));
+        assert!(!healthy.accepts(&gpu));
+        assert!(healthy.runtime.is_none() && healthy.models.is_empty());
+        assert!(!offer.accepts(&gpu));
+        assert!(!offer
+            .gpu_unavailable_reason
+            .unwrap()
+            .contains("private diagnostic"));
+        std::fs::write(&pause, "operator paused").unwrap();
+        let (recovered, _) = inventory_cached(&config, None, None).await.unwrap();
+        assert!(recovered.paused);
+        assert!(pause.exists());
+        assert!(!recovered.accepts(&spec));
+    }
     #[tokio::test]
     async fn api_paths_cannot_redirect_credentials() {
         let client = ApiClient::new("http://127.0.0.1:1", "x".repeat(32)).unwrap();

@@ -21,6 +21,8 @@ struct Cli {
 enum Command {
     #[command(hide = true)]
     SandboxRun,
+    #[command(hide = true)]
+    SandboxCheck,
     Inspect {
         #[arg(long)]
         config: PathBuf,
@@ -62,6 +64,7 @@ enum Command {
 async fn main() -> Result<()> {
     match Cli::parse().command {
         Command::SandboxRun => soapbox::sandbox::runner().await?,
+        Command::SandboxCheck => soapbox::sandbox::check_runner().await?,
         Command::Inspect { config } => {
             let config = WorkerConfig::read(&config)?;
             println!(

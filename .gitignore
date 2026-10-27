@@ -22,3 +22,4 @@ tx-history.json
 node.key
 mesh-operator.json
 credentials.json
+__pycache__/

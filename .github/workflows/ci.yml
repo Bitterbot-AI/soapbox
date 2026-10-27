@@ -39,3 +39,5 @@ jobs:
         with:
           node-version: 22
       - run: node --test distribution/*.test.mjs
+      - run: python3 scripts/test-wsl-service.py
+      - run: bash -n scripts/start-container-engine.sh scripts/soapbox-docker-service

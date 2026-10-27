@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Explicit host service for WSL without systemd. Installed only on operator request.
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+[[ $(id -u) == 0 ]] || { echo 'Run this service as root.' >&2; exit 1; }
+exec 9>/run/soapbox-docker-service.lock
+flock -w 60 9 || { echo 'Another Docker service operation is in progress.' >&2; exit 1; }
+
+healthy() {
+  [[ $(timeout 5 docker info --format '{{.CgroupVersion}} {{.SwapLimit}}' 2>/dev/null) == '2 true' ]]
+}
+start() {
+  if healthy; then echo 'Docker ready: cgroup v2; swap limits enforced.'; return; fi
+  if pgrep -x dockerd >/dev/null; then
+    echo 'Docker is already running but isolation is unavailable. Pause jobs and explicitly restart this service.' >&2
+    return 1
+  fi
+  # Close the operation lock in the child; otherwise the daemon would retain it.
+  nohup /usr/local/libexec/soapbox/start-container-engine.sh \
+    </dev/null >>/var/log/soapbox-docker.log 2>&1 9>&- &
+  for ((i=0; i<30; i++)); do
+    if healthy; then echo 'Docker ready: cgroup v2; swap limits enforced.'; return; fi
+    sleep 2
+  done
+  echo 'Docker startup failed. See /var/log/soapbox-docker.log.' >&2
+  return 1
+}
+stop() {
+  mapfile -t pids < <(pgrep -x dockerd || true)
+  ((${#pids[@]})) || return 0
+  ((${#pids[@]} == 1)) || { echo 'Multiple Docker daemons; refusing ambiguous stop.' >&2; return 1; }
+  local pid=${pids[0]}
+  [[ $(cat "/proc/$pid/comm") == dockerd ]] || return 1
+  local executable
+  executable=$(readlink -f "/proc/$pid/exe")
+  [[ $executable == "$(readlink -f "$(command -v dockerd)")" ]] || {
+    echo 'Unexpected Docker executable; refusing stop.' >&2; return 1;
+  }
+  kill -TERM "$pid"
+  for ((i=0; i<40; i++)); do
+    [[ -e /proc/$pid ]] || return 0
+    sleep 1
+  done
+  echo 'Docker did not stop cleanly. No forced kill was attempted.' >&2
+  return 1
+}
+case ${1:-status} in
+  start) start ;;
+  stop) stop ;;
+  restart) stop; start ;;
+  status) healthy && echo 'Docker ready: cgroup v2; swap limits enforced.' ;;
+  *) echo 'Usage: soapbox-docker-service {start|stop|restart|status}' >&2; exit 2 ;;
+esac

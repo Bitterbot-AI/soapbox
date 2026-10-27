@@ -11,3 +11,4 @@ pub mod ollama;
 
 pub mod payment;
 pub mod sandbox;
+mod sandbox_health;

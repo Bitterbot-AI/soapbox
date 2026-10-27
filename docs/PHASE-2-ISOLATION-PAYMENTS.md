@@ -12,6 +12,10 @@ An OS file lock serializes access to all GPUs assigned to this worker host. Conf
 
 Private and collective modes use the same sandbox, with existing pool/project ACLs. Legacy shared-host execution requires explicit allow_unsafe_host=true and cannot execute USDC jobs.
 
+See [operator health and recovery](OPERATOR-HEALTH.md) for the post-rc8 startup
+probe, automatic recovery, short error codes, Docker/WSL troubleshooting, and the
+requirement to upgrade both the host executable and its sandbox image together.
+
 ## Payment flow
 
 1. Buyer submits paid_usdc with operator ID and max_cost_microusdc. Amounts are integer USDC micro-units (six decimals).

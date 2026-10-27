@@ -85,6 +85,7 @@ CI runs these checks on Linux, macOS, and Windows. Local verification is recorde
 - [Phased MVP plan and acceptance gates](docs/MVP-PLAN.md)
 - [API and wire examples](docs/API.md)
 - [Operations and Bitterbot integration](docs/RUNBOOK.md)
+- [Operator isolation health, recovery, and Docker/WSL troubleshooting](docs/OPERATOR-HEALTH.md)
 - [Legacy Java mapping](docs/LEGACY-MAPPING.md)
 - [Threat model and current limitations](docs/SECURITY.md)
 - [Partner pilot briefs](docs/PARTNERS.md)

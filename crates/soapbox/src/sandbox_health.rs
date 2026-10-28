@@ -108,13 +108,25 @@ impl std::error::Error for Failure {}
 
 /// Drain stderr to avoid pipe deadlocks, retaining a bounded tail so leading
 /// Docker warnings cannot hide the sandbox's final structured failure.
-pub(crate) async fn diagnostic_tail(
+pub(crate) async fn diagnostic_tail(reader: impl AsyncRead + Unpin) -> std::io::Result<Vec<u8>> {
+    diagnostic_tail_until(reader, std::future::pending()).await
+}
+
+/// Stop once the owning process has been reaped, even if a descendant inherited
+/// its stderr pipe. No detached reader task survives cancellation.
+pub(crate) async fn diagnostic_tail_until(
     mut reader: impl AsyncRead + Unpin,
+    stop: impl Future<Output = ()>,
 ) -> std::io::Result<Vec<u8>> {
+    tokio::pin!(stop);
     let mut tail = Vec::new();
     let mut chunk = [0u8; 4096];
     loop {
-        let n = reader.read(&mut chunk).await?;
+        let n = tokio::select! {
+            biased;
+            _ = &mut stop => return Ok(tail),
+            result = reader.read(&mut chunk) => result?,
+        };
         if n == 0 {
             return Ok(tail);
         }
@@ -179,6 +191,18 @@ impl Health {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn completed_runtime_does_not_wait_for_inherited_stderr_eof() {
+        let (reader, _still_open_descendant) = tokio::io::duplex(64);
+        let tail = tokio::time::timeout(
+            Duration::from_secs(1),
+            diagnostic_tail_until(reader, async {}),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(tail.is_empty());
+    }
     #[tokio::test]
     async fn warning_flood_cannot_hide_sandbox_failure_or_leak_into_public_reason() {
         let stderr = format!(

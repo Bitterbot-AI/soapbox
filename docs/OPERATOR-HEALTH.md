@@ -113,6 +113,40 @@ restart WSL, launch competing daemons, disable swap, or relax sandbox flags to
 make a check pass. The worker resumes automatically once the actual boundary is
 healthy, unless an independent pause remains set.
 
+## Ollama startup under host load
+
+GPU readiness waits for a successful `/api/version` response containing a
+nonempty version. It uses a 60-second wall-clock startup budget, including HTTP
+waits, rather than counting retries. Cold readiness has a 180-second
+in-container budget, a 190-second Docker budget and a 200-second worker budget,
+so model loading can finish before capacity is advertised. This is an unfunded
+probe. Actual jobs retain the original 100-second in-container deadline for
+input, startup and model work together, and the 110-second Docker deadline.
+GPU residency must still pass. A listening port or an HTTP error is not readiness.
+
+The runner drains Ollama stderr continuously and retains a bounded local tail
+when startup or execution fails. It reaps the process on both success and
+failure. These diagnostics are not included in public capacity offers.
+
+If startup fails alongside slow Docker commands, inspect host disk/RAM pressure
+before increasing limits. On Linux, `/proc/pressure/io` and
+`/proc/pressure/memory` help distinguish storage waits from memory pressure.
+Concurrent builds, installation cleanup and swap on a busy mechanical drive
+can delay even small workloads. Pause or finish unrelated work with its owner's
+agreement, then repeat the isolated probe. Do not relax swap enforcement,
+network isolation or GPU residency checks to make a timed-out operator appear
+available. Arrange any WSL-wide restart explicitly because it affects other
+services.
+
+Validation on 2026-10-28: all 54 automated tests passed (two opt-in Docker tests
+were skipped), and Clippy passed with warnings denied. Two separate real
+isolated readiness probes on an RTX 4080 passed in 60.97 and 60.09 seconds,
+reporting all 27,137,146 model bytes in GPU memory. An unfunded two-input
+embedding job then succeeded on its first attempt, returning 384-dimensional
+vectors with full GPU residency; submission to completion took 76.12 seconds.
+These are single-host checks, not evidence of cross-machine execution or
+payment settlement. Actual jobs still use the original execution deadline.
+
 ## Packaging and Desktop handoff
 
 1. Publish a new versioned runtime archive containing this host executable and

@@ -172,7 +172,7 @@ async fn status(
         s.sweep(now())?;
         Ok(Json(json!({"api_version":API_VERSION,"release":env!("CARGO_PKG_VERSION"),"settlement":if s.payments.is_some() { "usdc_escrow" } else { "test_credits" },
             "principal":{"id":p.id,"roles":p.roles,"pools":p.pools,"projects":p.projects},"payment_account":s.payments.as_ref().map(|cfg| json!({"chain_id":cfg.chain_id,"address":cfg.wallets.get(&p.id)})),"account":s.balance(&p.id)?,"nodes":s.nodes(&p,now())?,"jobs":s.jobs(&p)?,
-            "capabilities":{"cpu_sha256":true,"embeddings":"pinned_ollama_batches","gpu_evidence":"worker_reported_full_residency","durable_storage":false,
+            "active_jobs":s.active_jobs(&p)?,"capabilities":{"cpu_sha256":true,"embeddings":"pinned_ollama_batches","gpu_evidence":"worker_reported_full_residency","durable_storage":false,
                 "temporary_artifacts":true,"public_marketplace":false,"mesh_discovery":false,"mesh_admissions":true,"mesh_cancellation":true}})))
     })
 }

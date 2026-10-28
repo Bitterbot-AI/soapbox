@@ -26,7 +26,8 @@ def sha(path):
 
 assets = ['LICENSE','containers/Dockerfile','scripts/start-container-engine.sh',
           'scripts/soapbox-docker-service','scripts/install-wsl-docker-service.py',
-          'docs/OPERATOR-HEALTH.md','docs/OPERATOR-HEALTH-VALIDATION.md','docs/RUNTIME-RC9.md']
+          'docs/OPERATOR-HEALTH.md','docs/OPERATOR-HEALTH-VALIDATION.md','docs/RUNTIME-RC9.md',
+          'docs/RUNTIME-RC10.md']
 for name_in in assets:
     target = directory/name_in
     target.parent.mkdir(parents=True, exist_ok=True)

@@ -10,6 +10,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - run: cargo build --release --locked
       - run: python3 distribution/package-runtime.py --binary target/release/soapbox --output runtime-out
       - uses: actions/upload-artifact@v4

@@ -1,5 +1,5 @@
 //! Operator-owned Docker executor. No buyer images, mounts, environment variables or commands.
-use crate::sandbox_health::{diagnostic_tail, Code, Failure};
+use crate::sandbox_health::{diagnostic_tail, diagnostic_tail_until, Code, Failure};
 use crate::{model::*, worker::WorkerConfig};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,20 @@ impl SandboxConfig {
 struct Input {
     job: Option<Job>,
     config: WorkerConfig,
+}
+
+fn runner_timeout(has_job: bool) -> Duration {
+    Duration::from_secs(if has_job { 100 } else { 180 })
+}
+fn docker_timeout(check_only: bool, has_job: bool) -> Duration {
+    if check_only {
+        Duration::from_secs(30)
+    } else {
+        runner_timeout(has_job) + Duration::from_secs(10)
+    }
+}
+pub(crate) fn readiness_timeout() -> Duration {
+    docker_timeout(false, false) + Duration::from_secs(10)
 }
 struct Container(String);
 impl Drop for Container {
@@ -205,7 +219,7 @@ async fn execute_inner(
         job: job.cloned(),
         config: safe_config,
     })?;
-    let deadline = Duration::from_secs(if check_only { 30 } else { 110 });
+    let deadline = docker_timeout(check_only, job.is_some());
     let result = tokio::time::timeout(deadline, async {
         let mut stdin = child.stdin.take().context("runner stdin")?;
         stdin.write_all(&input).await?;
@@ -249,16 +263,20 @@ pub async fn check_runner() -> Result<()> {
     runner_mode(true).await
 }
 async fn runner_mode(check_only: bool) -> Result<()> {
+    // Input is still bounded independently. Count it against the original
+    // 100-second job deadline; only non-job readiness gets the cold-start budget.
+    let started = tokio::time::Instant::now();
+    let mut input = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::io::stdin().take(1_048_577).read_to_end(&mut input),
+    )
+    .await??;
+    ensure!(input.len() <= 1_048_576, "runner input limit");
+    let request: Input = serde_json::from_slice(&input)?;
+    let deadline = started + runner_timeout(check_only || request.job.is_some());
     // In-container deadline survives a worker crash or a disconnected Docker client.
-    tokio::time::timeout(Duration::from_secs(100), async {
-        let mut input = Vec::new();
-        tokio::time::timeout(
-            Duration::from_secs(5),
-            tokio::io::stdin().take(1_048_577).read_to_end(&mut input),
-        )
-        .await??;
-        ensure!(input.len() <= 1_048_576, "runner input limit");
-        let request: Input = serde_json::from_slice(&input)?;
+    tokio::time::timeout_at(deadline, async {
         verify_boundary(&request).inspect_err(|error| {
             if let Some(failure) = error.downcast_ref::<Failure>() {
                 failure.emit();
@@ -283,46 +301,104 @@ async fn runner_mode(check_only: bool) -> Result<()> {
                 .kill_on_drop(true)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stderr(Stdio::piped())
                 .spawn()?;
-            let client = reqwest::Client::new();
-            let mut listening = false;
-            for _ in 0..300 {
-                ensure!(
-                    runtime.try_wait()?.is_none(),
-                    "isolated Ollama exited before readiness"
-                );
-                if client
-                    .get(format!("{}/api/version", crate::ollama::LOCAL_BACKEND))
-                    .timeout(Duration::from_millis(200))
-                    .send()
-                    .await
-                    .is_ok()
-                {
-                    listening = true;
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            ensure!(
-                listening,
-                "isolated Ollama did not listen within 30 seconds"
+            let stderr = runtime.stderr.take().context("Ollama stderr")?;
+            let (done, stopped) = tokio::sync::oneshot::channel();
+            // Drain continuously so a noisy server cannot deadlock on a full pipe.
+            // The bounded tail stays in operator-local diagnostics, never the offer.
+            let (result, diagnostic) = tokio::join!(
+                async {
+                    let result = async {
+                        wait_for_ollama(
+                            &mut runtime,
+                            crate::ollama::LOCAL_BACKEND,
+                            Duration::from_secs(60),
+                        )
+                        .await?;
+                        if let Some(job) = &request.job {
+                            crate::ollama::execute(
+                                job,
+                                &request.config,
+                                crate::ollama::LOCAL_BACKEND,
+                            )
+                            .await
+                        } else {
+                            Ok(serde_json::to_value(
+                                crate::ollama::ready(crate::ollama::LOCAL_BACKEND, &request.config)
+                                    .await?,
+                            )?)
+                        }
+                    }
+                    .await;
+                    // Always reap the child, including startup failure. The outer
+                    // job deadline still bounds startup plus all model work.
+                    let _ = runtime.kill().await;
+                    let _ = runtime.wait().await;
+                    let _ = done.send(());
+                    result
+                },
+                diagnostic_tail_until(stderr, async {
+                    let _ = stopped.await;
+                })
             );
-            let output = if let Some(job) = &request.job {
-                crate::ollama::execute(job, &request.config, crate::ollama::LOCAL_BACKEND).await?
-            } else {
-                serde_json::to_value(
-                    crate::ollama::ready(crate::ollama::LOCAL_BACKEND, &request.config).await?,
-                )?
-            };
-            runtime.kill().await?;
-            let _ = runtime.wait().await;
-            output
+            result.map_err(|error: anyhow::Error| {
+                let tail = diagnostic.unwrap_or_default();
+                let failure = Failure::new(
+                    Code::RuntimeFailed,
+                    format!(
+                        "Ollama diagnostic (local only): {}\nOllama failure: {error:#}",
+                        String::from_utf8_lossy(&tail)
+                    ),
+                );
+                failure.emit();
+                anyhow::Error::from(failure)
+            })?
         };
         println!("{}", serde_json::to_string(&result)?);
         Ok::<(), anyhow::Error>(())
     })
     .await?
+}
+
+async fn wait_for_ollama(
+    runtime: &mut tokio::process::Child,
+    backend: &str,
+    budget: Duration,
+) -> Result<()> {
+    // Only the fixed loopback service is used in production. Never consult host
+    // proxy settings for sandbox readiness or follow a redirect to another host.
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_millis(500))
+        .build()?;
+    let result = tokio::time::timeout(budget, async {
+        loop {
+            if let Some(status) = runtime.try_wait()? {
+                anyhow::bail!("isolated Ollama exited before readiness ({status})");
+            }
+            if let Ok(response) = client.get(format!("{backend}/api/version")).send().await {
+                if response.status().is_success() {
+                    if let Ok(body) = response.json::<Value>().await {
+                        if body
+                            .get("version")
+                            .and_then(Value::as_str)
+                            .is_some_and(|v| !v.trim().is_empty())
+                        {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await;
+    result.context(format!(
+        "isolated Ollama did not become ready within {} seconds; check disk and RAM pressure",
+        budget.as_secs()
+    ))?
 }
 
 fn verify_boundary(request: &Input) -> Result<()> {
@@ -401,6 +477,104 @@ fn verify_boundary_inner(request: &Input) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cold_probe_budget_does_not_extend_paid_or_private_job_execution() {
+        assert_eq!(runner_timeout(true), Duration::from_secs(100));
+        assert_eq!(docker_timeout(false, true), Duration::from_secs(110));
+        assert_eq!(docker_timeout(true, false), Duration::from_secs(30));
+        assert!(runner_timeout(false) > runner_timeout(true));
+        assert!(docker_timeout(false, false) > runner_timeout(false));
+        assert!(readiness_timeout() > docker_timeout(false, false));
+    }
+
+    #[cfg(unix)]
+    async fn startup_probe(reply: axum::Router, budget: Duration) -> Result<()> {
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = socket.local_addr()?;
+        let server = tokio::spawn(async move { axum::serve(socket, reply).await });
+        let mut child = Command::new("sleep").arg("30").kill_on_drop(true).spawn()?;
+        let result = wait_for_ollama(&mut child, &format!("http://{address}"), budget).await;
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        server.abort();
+        result
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn readiness_waits_through_http_failure_for_a_valid_version() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let route = axum::Router::new().route(
+            "/api/version",
+            axum::routing::get(move || {
+                let count = count.clone();
+                async move {
+                    let status = if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE
+                    } else {
+                        axum::http::StatusCode::OK
+                    };
+                    (status, axum::Json(serde_json::json!({"version":"test"})))
+                }
+            }),
+        );
+        startup_probe(route, Duration::from_secs(2)).await.unwrap();
+        assert!(calls.load(Ordering::SeqCst) >= 2);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn readiness_rejects_success_without_a_version() {
+        let route = axum::Router::new().route(
+            "/api/version",
+            axum::routing::get(|| async { axum::Json(serde_json::json!({"version":" "})) }),
+        );
+        assert!(startup_probe(route, Duration::from_millis(80))
+            .await
+            .is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn readiness_deadline_includes_a_stalled_http_request() {
+        let route = axum::Router::new().route(
+            "/api/version",
+            axum::routing::get(|| async {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                axum::Json(serde_json::json!({"version":"test"}))
+            }),
+        );
+        // An external bound catches the old retry-count loop, whose network
+        // waits could multiply its advertised startup deadline.
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            startup_probe(route, Duration::from_millis(80)),
+        )
+        .await
+        .unwrap();
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("did not become ready"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn readiness_reports_early_process_exit() {
+        let mut child = Command::new("sh").args(["-c", "exit 7"]).spawn().unwrap();
+        child.wait().await.unwrap();
+        let error = wait_for_ollama(&mut child, "http://127.0.0.1:1", Duration::from_secs(1))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("exited before readiness"));
+    }
+
     #[test]
     fn gpu_reservation_excludes_other_workers_until_released() {
         let dir = tempfile::tempdir().unwrap();

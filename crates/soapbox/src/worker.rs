@@ -246,7 +246,12 @@ async fn inventory_cached(
             ensure!(runtime.fully_gpu(), "model is not fully GPU resident");
             Ok::<_, anyhow::Error>(runtime)
         };
-        match tokio::time::timeout(Duration::from_secs(100), readiness).await {
+        let deadline = if config.sandbox.is_some() && cached.is_none() {
+            crate::sandbox::readiness_timeout()
+        } else {
+            Duration::from_secs(100)
+        };
+        match tokio::time::timeout(deadline, readiness).await {
             Ok(Ok(runtime)) => {
                 offer.gpu_observed = true;
                 offer.models.push(runtime.model.clone());

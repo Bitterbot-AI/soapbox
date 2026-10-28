@@ -64,6 +64,13 @@ impl Store {
         })
         .collect()
     }
+    /// Unlike the recent-job list, this count includes old unresolved payments.
+    pub fn active_jobs(&self, p: &Principal) -> Result<u64> {
+        Ok(self.db.query_row(
+            "SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running','awaiting_payment','settlement_pending','refund_pending','payment_review') AND (owner=?1 OR ?2 OR (?3 AND (json_extract(data,'$.worker')=?1 OR json_extract(data,'$.spec.mode.operator')=?1)))",
+            params![p.id, p.has("admin"), p.has("worker")], |r| r.get(0),
+        )?)
+    }
     pub fn balance(&self, id: &str) -> Result<Value> {
         let row: Option<(i64, i64)> = self
             .db

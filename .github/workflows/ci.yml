@@ -3,6 +3,23 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  runtime:
+    needs: [rust, settlement, distribution]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked
+      - run: python3 distribution/package-runtime.py --binary target/release/soapbox --output runtime-out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soapbox-runtime-linux-x64
+          path: |
+            runtime-out/*.tar.gz
+            runtime-out/runtime.json
+            runtime-out/SHA256SUMS
+          retention-days: 7
   rust:
     strategy:
       matrix:
